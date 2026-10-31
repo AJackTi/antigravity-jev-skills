@@ -161,7 +161,8 @@ class RunWorkflowTests(unittest.TestCase):
                         usage={'input_tokens': 1000, 'output_tokens': 200, 'thinking_tokens': 50, 'cache_read_tokens': 300, 'total_tokens': 1200},
                     )
                 else:
-                    self.assertIn('--resume', argv)
+                    self.assertIn('--conversation', argv)
+                    self.assertNotIn('--resume', argv)
                     self.assertIn('same-worker-cid', argv)
                     write_valid_module_and_tests(ws)
                     stream = make_worker_stream(

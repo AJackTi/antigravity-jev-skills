@@ -1,18 +1,13 @@
-# Pre-push release verification
+# English release verification
 
-Result: PASS for source distribution readiness, confidence 96%.
+PASS within the release scope, confidence 97%.
 
-- 36 Antigravity and 48 Jev unit tests: PASS, exit 0.
-- 6 offline replay cases (3 task, 3 quant): PASS, exit 0.
-- All 3 skill validators: PASS, exit 0.
-- Manifest and ZIP/source comparison: PASS.
-- Known configured-key comparison and selected credential-pattern scan: no matches. Private absolute paths and broken local documentation links: none found.
-- Isolated installation, idempotency, collision preservation, launchers and no partial install on conflict: PASS.
-- README key setup executed with synthetic input in an isolated test, checked 0700/0600 modes and existing-key preservation: PASS. Shell command syntax checked after replacing URL placeholders: PASS.
-- Gitignore now excludes runtime logs, JSONL records and workflow output files while retaining source, manifest, fixtures and license text.
-- Gemini 4 Argon High authored the final documentation/config corrections. Jev 1.13 triage escalated to two fresh Gemini 4 Argon High reviewers, both PASS with no findings. ChatGPT final review: PASS.
-- Installed global skills and policy remain unchanged.
+- Current repository documentation, summary and user-facing workflow labels are English. SUMMARY.vi.md is replaced by SUMMARY.md; Unicode test values remain unchanged at runtime.
+- 36 Antigravity tests, 48 Jev tests and 6 offline replay cases pass (exit 0). All 3 skill validators pass.
+- README shell examples parse; the hidden-input key example passes in isolation and preserves existing keys. Local documentation links are checked.
+- Worker resume now uses supported --conversation rather than --resume. Existing regression assertions pass; a real resumed Gemini session returned RESUME_OK without tools or writes.
+- Gemini 4 Argon High workers authored product changes. Jev triage, fresh Gemini reviews and ChatGPT final review pass.
+- The last translation's native wrapper could not handle the deliberate summary deletion or execute a shell conditional directly. Its failures are preserved; explicit rename validation, fresh tests and a standalone Jev/Gemini gate passed without changing safety settings.
+- This task did not edit installed global skills, policy or launchers. Concurrent global file changes were detected and preserved, rather than overwritten; local audit fingerprints record them separately.
 
-The repository owner confirms original client ownership and redistribution rights (user declaration, 2026-10-31). TypeSafe upstream MIT license is retained separately; no root reuse license was selected on the owner's behalf. This is not independent legal verification, an exhaustive secret scan, a new live-model accuracy benchmark or a guarantee of correctness. No repository was initialized, staged, committed or pushed as part of this audit.
-
-See VERIFICATION.json for machine-readable details and manifest.json for file hashes.
+Older commits and release assets remain for reproducibility. Owner-confirmed provenance and separate TypeSafe MIT attribution are retained; no root reuse license is selected. These checks do not guarantee universal correctness, fresh-account onboarding, availability or production approval. Credentials and private run logs are excluded.

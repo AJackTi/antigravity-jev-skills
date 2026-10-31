@@ -107,7 +107,7 @@ class PoolTests(unittest.TestCase):
 
     def test_rejects_invalid_key_values(self):
         target = self.directory / "key-01.key"
-        for value in ("", "one two", "one\ntwo", "bad\tkey", "x" * 4097, "é", "\n"):
+        for value in ("", "one two", "one\ntwo", "bad\tkey", "x" * 4097, "\u00e9", "\n"):
             target.write_text(value)
             with self.subTest(value=value[:20]), self.assertRaises(pool.PoolError):
                 self.select(JEV_KEY_SLOT="1")

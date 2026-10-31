@@ -475,7 +475,7 @@ def run_worker_attempt(
         '--output-format', 'stream-json',
     ]
     if resume_conversation_id:
-        argv.extend(['--resume', resume_conversation_id])
+        argv.extend(['--conversation', resume_conversation_id])
     argv.extend(['--print', prompt])
 
     gate.save(
@@ -875,7 +875,7 @@ def run_workflow(
         attempt_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         if attempt_idx == 0:
             prompt = build_initial_prompt(packet_text, effective_objective, effective_scope, effective_verify)
-            step_label = 'Gemini triển khai'
+            step_label = 'Gemini implementation'
         else:
             prompt = build_rework_prompt(
                 attempt_idx,
@@ -886,7 +886,7 @@ def run_workflow(
                 pending_defects,
                 questions,
             )
-            step_label = f'Gemini sửa lần {attempt_idx}'
+            step_label = f'Gemini rework {attempt_idx}'
 
         worker_res = run_worker_attempt(
             workspace=workspace,
@@ -1043,7 +1043,7 @@ def run_workflow(
         j_tot = int(jev_u.get('total_tokens', j_in + j_out) or (j_in + j_out))
         external_steps.append(
             {
-                'step': 'Jev đánh giá',
+                'step': 'Jev assessment',
                 'role': 'jev',
                 'attempt': attempt_num,
                 'model': JEV_MODEL,
@@ -1066,7 +1066,7 @@ def run_workflow(
             )
             external_steps.append(
                 {
-                    'step': f'Gemini review độc lập {rev_idx}',
+                    'step': f'Gemini independent review {rev_idx}',
                     'role': 'reviewer',
                     'attempt': attempt_num,
                     'model': rev.get('model') or GEMINI_MODEL,
