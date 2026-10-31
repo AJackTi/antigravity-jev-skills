@@ -1,11 +1,11 @@
-# Documentation cleanup verification
+# Documentation pruning verification
 
 PASS within scope, confidence 98%.
 
-- README reduced from 156 to 24 lines and from 10 to 2 Markdown links. Detailed setup and operation instructions are consolidated in INSTALL.md.
-- GitHub Markdown rendering returns one title, one installation code block and two primary links. Local guide links resolve; shell examples parse; hidden-input key setup succeeds with 0700/0600 modes and preserves existing keys.
-- Existing Antigravity tests pass (36 tests, exit 0). Runtime/test code is unchanged; release2026.10.31.5 runtime evidence is retained rather than represented as new live execution.
-- Gemini 4 Argon High workers authored all product documentation edits. Jev and fresh Gemini reviews pass; ChatGPT final review passes. A timed-out attempt was retried and remains recorded outside the repository.
-- This task did not write global skills, policy or launchers. Concurrent global gate/test/cache changes were observed outside task worker path references and preserved without restoration.
+- README remains the same concise 24-line landing page. Publisher instructions are absent from current main.
+- INSTALL.md retains setup steps and ten byte-identical installation/smoke command blocks. Redundant contributor, architecture, detailed-threshold and advanced-reference discussions are removed. Source/license information has one canonical reference to THIRD_PARTY_NOTICES.md; notices and license files are unchanged.
+- Release notes are reduced to six concise lines. Local links, shell syntax and isolated hidden-input key setup/existing-key preservation pass.
+- Existing Antigravity tests pass (36 tests, exit 0); no new tests or runtime changes. Earlier runtime evidence is retained, not claimed as a new live run.
+- Gemini 4 Argon High authored documentation edits. Jev triage, fresh Gemini reviews and ChatGPT final review pass. This task did not write installed global skills, policy or launchers.
 
-The installer registers symlinks; authentication, key pool and global policy configuration still require the installation guide. These checks do not guarantee service availability, quota or correctness in every environment. Existing provenance/license notices are unchanged. Credentials and private logs are excluded.
+Service availability, quota and authentication state remain external dependencies. Older commits and release assets are retained as historical snapshots.
