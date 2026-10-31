@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "release": "2026.10.31.5",
+  "release": "2026.10.31.6",
   "source_profile": "optimized-global",
   "global_policy": {
     "archive_path": "global-config/AGENTS.md",
@@ -18,12 +18,12 @@
       "bytes": 369
     },
     "INSTALL.md": {
-      "sha256": "f3805aa78d6775391d85c514e1c4d1fc056a44894f891b39f37e459e2b231a76",
-      "bytes": 1956
+      "sha256": "47808ac2eff43dbadbb5a82bea3b146556d7a73685100bb3389638108c17f42f",
+      "bytes": 8508
     },
     "README.md": {
-      "sha256": "a061ccae993d035b54bd10631e0d98eb9a0042e2e4f1337a74222527236632ae",
-      "bytes": 12049
+      "sha256": "dd67fae486c38da8b8a969d95812df0a91cc3f58893c647c7690abeb2b825d7a",
+      "bytes": 1218
     },
     "RELEASE_NOTES.md": {
       "sha256": "7a16168fbd91a24a90b7a40f0d7fe21a8d462541035d99c5720ccca56a8d6b17",
@@ -34,12 +34,12 @@
       "bytes": 2301
     },
     "VERIFICATION.json": {
-      "sha256": "69e8566ac0774349dab5be7d245005e3402fdce373b2752290aeb0c85296b99a",
-      "bytes": 5780
+      "sha256": "8b3ca7c121d41bb21a64d257342ecb81b670b91254fc74054373c881edc444e4",
+      "bytes": 4552
     },
     "VERIFICATION.md": {
-      "sha256": "2b6f5a6dfb095801ca356cbd20daed8fc139cd6c732ee158203daf440e6cde0c",
-      "bytes": 1634
+      "sha256": "4ee46d8f8464c4fb40eb97c4a03d12d0453b31db8f1d2113003352815a1c4f86",
+      "bytes": 1351
     },
     "antigravity-sol-quant-runner/SKILL.md": {
       "sha256": "a508d0ca2371520211e52f732002a2059e46b5fc5793700f7215b97f4371ef7e",

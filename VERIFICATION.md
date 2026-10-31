@@ -1,13 +1,11 @@
-# English release verification
+# Documentation cleanup verification
 
-PASS within the release scope, confidence 97%.
+PASS within scope, confidence 98%.
 
-- Current repository documentation, summary and user-facing workflow labels are English. SUMMARY.vi.md is replaced by SUMMARY.md; Unicode test values remain unchanged at runtime.
-- 36 Antigravity tests, 48 Jev tests and 6 offline replay cases pass (exit 0). All 3 skill validators pass.
-- README shell examples parse; the hidden-input key example passes in isolation and preserves existing keys. Local documentation links are checked.
-- Worker resume now uses supported --conversation rather than --resume. Existing regression assertions pass; a real resumed Gemini session returned RESUME_OK without tools or writes.
-- Gemini 4 Argon High workers authored product changes. Jev triage, fresh Gemini reviews and ChatGPT final review pass.
-- The last translation's native wrapper could not handle the deliberate summary deletion or execute a shell conditional directly. Its failures are preserved; explicit rename validation, fresh tests and a standalone Jev/Gemini gate passed without changing safety settings.
-- This task did not edit installed global skills, policy or launchers. Concurrent global file changes were detected and preserved, rather than overwritten; local audit fingerprints record them separately.
+- README reduced from 156 to 24 lines and from 10 to 2 Markdown links. Detailed setup and operation instructions are consolidated in INSTALL.md.
+- GitHub Markdown rendering returns one title, one installation code block and two primary links. Local guide links resolve; shell examples parse; hidden-input key setup succeeds with 0700/0600 modes and preserves existing keys.
+- Existing Antigravity tests pass (36 tests, exit 0). Runtime/test code is unchanged; release2026.10.31.5 runtime evidence is retained rather than represented as new live execution.
+- Gemini 4 Argon High workers authored all product documentation edits. Jev and fresh Gemini reviews pass; ChatGPT final review passes. A timed-out attempt was retried and remains recorded outside the repository.
+- This task did not write global skills, policy or launchers. Concurrent global gate/test/cache changes were observed outside task worker path references and preserved without restoration.
 
-Older commits and release assets remain for reproducibility. Owner-confirmed provenance and separate TypeSafe MIT attribution are retained; no root reuse license is selected. These checks do not guarantee universal correctness, fresh-account onboarding, availability or production approval. Credentials and private run logs are excluded.
+The installer registers symlinks; authentication, key pool and global policy configuration still require the installation guide. These checks do not guarantee service availability, quota or correctness in every environment. Existing provenance/license notices are unchanged. Credentials and private logs are excluded.
