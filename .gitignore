@@ -1,0 +1,32 @@
+# OS metadata
+.DS_Store
+._*
+Thumbs.db
+
+# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Secrets and credentials
+.env
+.env.*
+*.key
+api_key
+.rotation.json
+credentials*
+secrets*
+
+# Workflow outputs and raw logs
+.artifacts/
+workflow-run*/
+quant-run*/
+attempt-*/
+review-gate/
+*.stdout.txt
+*.stderr.txt
+*.stdout.jsonl
+*.log
+*.jsonl
+workflow-result.json
+proof-pack.txt

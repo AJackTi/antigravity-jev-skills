@@ -1,0 +1,20 @@
+[
+  {
+    "name": "solo-small",
+    "task": "Fix parser validation for empty input",
+    "files": ["config/config.go", "config/config_test.go"],
+    "expected": ["Understanding", "Stop conditions"]
+  },
+  {
+    "name": "protected-review",
+    "task": "Audit funding accounting regression",
+    "files": ["strategies/funding_accrual.go", "strategies/funding_accrual_test.go"],
+    "expected": ["FIXES_REGISTRY.md", "Reviewer contract"]
+  },
+  {
+    "name": "bounded-blocked",
+    "task": "Change a live exchange endpoint",
+    "files": ["configs/live/example.yaml"],
+    "expected": ["Stop conditions", "explicit user authorization"]
+  }
+]

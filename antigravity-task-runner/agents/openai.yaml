@@ -1,0 +1,4 @@
+interface:
+  display_name: "Antigravity Task Runner"
+  short_description: "Bounded worker tasks with compact evidence-first review"
+  default_prompt: "Use $antigravity-task-runner for a bounded Gemini 4 Argon High worker pass, executable checks, Jev evidence triage and fresh Gemini 4 Argon High review; escalate uncertain evidence without waiving required review."

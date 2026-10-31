@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""Select one protected TypeSafe key per CLI invocation (macOS/Linux)."""
+
+from __future__ import annotations
+
+import fcntl
+import hashlib
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+
+HELP = """Usage: jev-pool JEV_SUBCOMMAND [ARGS...]
+Offline help: jev-pool --help
+
+TYPESAFE_KEY_DIR  directory with owner-only 0600 key-*.key files (directory 0700)
+                 default: ~/.config/typesafe/keys
+JEV_KEY_SLOT     explicit 1-based slot in lexically sorted *.key files
+JEV_KEY_MODE     stable (default) or round-robin; a slot overrides the mode
+JEV_AGENT        stable identity (fallback AGENT_ID, USER, default)
+
+Round-robin advances once per CLI invocation, not per request in a batch.
+No automatic key failover, provider revocation, or rate-limit circumvention.
+The key enters the child environment, never its argument list. Same-user/admin
+processes may still inspect environments; this is not a secret vault.
+"""
+
+
+class PoolError(Exception):
+    pass
+
+
+def check_private(info: os.stat_result, *, directory: bool = False) -> None:
+    expected = 0o700 if directory else 0o600
+    right_type = stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)
+    if not right_type or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != expected:
+        raise PoolError(f"require an owned {'directory' if directory else 'regular file'} with mode {expected:o}")
+    if not directory and info.st_nlink != 1:
+        raise PoolError("hard-linked key/state files are not supported")
+
+
+def open_private(name: str, directory_fd: int, flags: int = os.O_RDONLY) -> int:
+    fd = os.open(name, flags | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=directory_fd)
+    try:
+        check_private(os.fstat(fd))
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def key_value(name: str, directory_fd: int) -> str:
+    fd = open_private(name, directory_fd)
+    with os.fdopen(fd, "rb") as stream:
+        data = stream.read(4097)
+    if not data or len(data) > 4096:
+        raise PoolError("key must contain 1..4096 bytes")
+    try:
+        value = data.decode("ascii").rstrip("\r\n")
+    except UnicodeDecodeError:
+        raise PoolError("key must be ASCII") from None
+    if not value or any(ord(c) <= 32 or ord(c) >= 127 for c in value):
+        raise PoolError("key must be one nonempty line without whitespace/control characters")
+    return value
+
+
+def round_robin(names: list[str], directory_fd: int) -> int:
+    # Single file, held open and exclusively locked across read/advance/fsync.
+    # Malformed state fails closed rather than silently resetting a rotation.
+    fd = open_private(".rotation.json", directory_fd, os.O_RDWR | os.O_CREAT)
+    import json
+
+    with os.fdopen(fd, "r+", encoding="utf-8") as stream:
+        fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+        raw = stream.read(16385)
+        if len(raw) > 16384:
+            raise PoolError("rotation state is oversized")
+        previous = None
+        if raw:
+            try:
+                state = json.loads(raw)
+            except (ValueError, TypeError):
+                raise PoolError("invalid rotation state") from None
+            if not isinstance(state, dict) or set(state) != {"last"} or not isinstance(state["last"], str):
+                raise PoolError("invalid rotation state")
+            previous = state["last"]
+        index = (names.index(previous) + 1) % len(names) if previous in names else 0
+        # Validate the selected file before consuming a turn.
+        key_value(names[index], directory_fd)
+        stream.seek(0)
+        json.dump({"last": names[index]}, stream)
+        stream.write("\n")
+        stream.truncate()
+        stream.flush()
+        os.fsync(stream.fileno())
+        return index
+
+
+def select_key(directory: Path, environment: dict[str, str]) -> str:
+    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        check_private(os.fstat(fd), directory=True)
+        names = sorted(name for name in os.listdir(fd) if name.endswith(".key"))
+        if not names:
+            raise PoolError("no *.key files in key directory")
+        if any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*\.key", name) for name in names):
+            raise PoolError("use simple ASCII key filenames without whitespace")
+        # Validate all pool members; do not intermittently select insecure keys.
+        for name in names:
+            candidate = open_private(name, fd)
+            os.close(candidate)
+        slot = environment.get("JEV_KEY_SLOT")
+        mode = environment.get("JEV_KEY_MODE", "stable")
+        if slot is not None:
+            if not re.fullmatch(r"[1-9][0-9]{0,8}", slot) or int(slot) > len(names):
+                raise PoolError(f"JEV_KEY_SLOT must be in 1..{len(names)}")
+            index = int(slot) - 1
+        elif mode == "round-robin":
+            index = round_robin(names, fd)
+        elif mode == "stable":
+            identity = environment.get("JEV_AGENT") or environment.get("AGENT_ID") or environment.get("USER") or "default"
+            # Rendezvous hashing minimizes reassignment when pool membership changes.
+            index = max(range(len(names)), key=lambda i: hashlib.sha256(
+                (identity + "\0" + names[i]).encode("utf-8")
+            ).digest())
+        else:
+            raise PoolError("JEV_KEY_MODE must be stable or round-robin")
+        return key_value(names[index], fd)
+    finally:
+        os.close(fd)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else argv
+    if not args or args == ["--help"]:
+        print(HELP)
+        return 0
+    if any(len(a.split("=", 1)[0]) > 2 and "--api-key".startswith(a.split("=", 1)[0]) for a in args):
+        print("jev-pool: --api-key conflicts with pool selection", file=sys.stderr)
+        return 2
+    if args[0] == "auth" and args[1:2] != ["status"]:
+        print("jev-pool: use the regular launcher for auth set/clear", file=sys.stderr)
+        return 2
+    environment = os.environ.copy()
+    # Never redirect pool credentials to an environment-overridden service.
+    if environment.get("TYPESAFE_BASE_URL", "https://api.typesafe.ai").rstrip("/") != "https://api.typesafe.ai":
+        print("jev-pool: custom TYPESAFE_BASE_URL is not supported", file=sys.stderr)
+        return 2
+    try:
+        directory = Path(environment.get("TYPESAFE_KEY_DIR", str(Path.home() / ".config/typesafe/keys"))).expanduser()
+        environment["TYPESAFE_API_KEY"] = select_key(directory, environment)
+        program = Path(__file__).resolve().with_name("jev")
+        # No 'env KEY=...' executable and no key-bearing arguments.
+        os.execve(str(program), [str(program), *args], environment)
+    except (PoolError, OSError) as exc:
+        # Never include file contents, keys, or API bodies in diagnostics.
+        detail = str(exc) if isinstance(exc, PoolError) else "cannot access protected pool files or launcher"
+        print(f"jev-pool: {detail}", file=sys.stderr)
+        return 3
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

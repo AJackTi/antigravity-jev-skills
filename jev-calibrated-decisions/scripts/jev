@@ -1,0 +1,8 @@
+#!/usr/bin/env python3
+"""Portable launcher; resolve the bundle correctly even through a symlink."""
+import os
+from pathlib import Path
+import sys
+
+os.environ.setdefault('TYPESAFE_DEFAULT_MODEL', 'jev-1.13.0')
+os.execv(sys.executable, [sys.executable, str(Path(__file__).resolve().with_name('jev.py')), *sys.argv[1:]])

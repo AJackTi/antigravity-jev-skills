@@ -1,0 +1,6 @@
+interface:
+  display_name: "Jev calibrated decisions"
+  short_description: "Typed, calibrated judgments for repeated agent decisions"
+  default_prompt: "Use $jev for atomic typed judgments with retained evidence and validation gates; explicitly opt in for experimental images/Box and send unresolved cases to review."
+policy:
+  allow_implicit_invocation: true

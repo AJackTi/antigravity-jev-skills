@@ -1,0 +1,181 @@
+{
+  "format": 1,
+  "release": "2026.10.31.4",
+  "source_profile": "optimized-global",
+  "global_policy": {
+    "archive_path": "global-config/AGENTS.md",
+    "target": "~/.codex/AGENTS.md",
+    "automatically_applied_by_installer": false
+  },
+  "packages": {
+    "antigravity-task-runner": "antigravity-task-runner",
+    "antigravity-sol-quant-runner": "antigravity-sol-quant-runner",
+    "jev": "jev-calibrated-decisions"
+  },
+  "files": {
+    ".gitignore": {
+      "sha256": "4a0f4f430b3554344ed464f26c300819005c141aa24714b5d01c33435fce2590",
+      "bytes": 369
+    },
+    "INSTALL.md": {
+      "sha256": "f3805aa78d6775391d85c514e1c4d1fc056a44894f891b39f37e459e2b231a76",
+      "bytes": 1956
+    },
+    "README.md": {
+      "sha256": "3c841e3388b473a5340600cd6f8bb1693707183c9f224ec9e82cd247ef884cb4",
+      "bytes": 13137
+    },
+    "THIRD_PARTY_NOTICES.md": {
+      "sha256": "70b2ca6b9536345982638e00f69c7876fc8ecef20abbd51ffbd4f76b4adb6abc",
+      "bytes": 2301
+    },
+    "VERIFICATION.json": {
+      "sha256": "77539144e6c8ab446b921af41d55d16a46c10ec62df94e4d61792b0ca527438c",
+      "bytes": 5108
+    },
+    "VERIFICATION.md": {
+      "sha256": "5ac0516631bbb45e7a2e22656bf347f0bdf2a5dd361cf49cac84ee49166e1047",
+      "bytes": 1695
+    },
+    "antigravity-sol-quant-runner/SKILL.md": {
+      "sha256": "a508d0ca2371520211e52f732002a2059e46b5fc5793700f7215b97f4371ef7e",
+      "bytes": 2951
+    },
+    "antigravity-sol-quant-runner/agents/openai.yaml": {
+      "sha256": "7750d950343f6451b46c4899a80cd14997eb61cb1f034ada1fd3fe6e335a0e3e",
+      "bytes": 359
+    },
+    "antigravity-sol-quant-runner/fixtures/quant_cases.json": {
+      "sha256": "7dc86c4566ddd7b982a6146fd67b765701413bee3d5655270352d14b129459d2",
+      "bytes": 994
+    },
+    "antigravity-sol-quant-runner/references/quant-audit.md": {
+      "sha256": "2836f8674c842553ba6b38570d4e5960708598da6dbcc34794224fed1fa6e1aa",
+      "bytes": 3921
+    },
+    "antigravity-sol-quant-runner/scripts/build_quant_audit_pack.py": {
+      "sha256": "4192bb2b1be4cbe25d45f1106fa287c8f63fa26bf2d7f0559c5820070f79abcf",
+      "bytes": 3053
+    },
+    "antigravity-task-runner/SKILL.md": {
+      "sha256": "fe0777737f355f430d0fd1cda7b8e09a8a69bbc4f827b9169135b92a138d2bd5",
+      "bytes": 3510
+    },
+    "antigravity-task-runner/agents/openai.yaml": {
+      "sha256": "ba45b04600f40291ea6dafa590ca1944167c66ea59422995bea1ae89e006dca0",
+      "bytes": 366
+    },
+    "antigravity-task-runner/fixtures/task_cases.json": {
+      "sha256": "cbc397189081b883c2998d512a71b94ccb6af04e64195e2d4a5fb8be0aa18d78",
+      "bytes": 639
+    },
+    "antigravity-task-runner/references/jev-gate.md": {
+      "sha256": "ebc1c1ca1912c659db3350a30b84a13af0a9bd991c4b8021a43b97c109dbfc99",
+      "bytes": 5275
+    },
+    "antigravity-task-runner/scripts/build_task_packet.py": {
+      "sha256": "f9135ec38e42e1b9f76d8239028af853eb60e9af4b539a66d3f84a08b10816f6",
+      "bytes": 2994
+    },
+    "antigravity-task-runner/scripts/jev_review_gate.py": {
+      "sha256": "e2dba07239601c59a2b73ec2babc37f6974e33a361f87efa45d9225a8428c31c",
+      "bytes": 29153
+    },
+    "antigravity-task-runner/scripts/record_run.py": {
+      "sha256": "1c76694f27d8b3ee9778afe67f2c399b4e1e158bc61794a8563ee9c7edff1200",
+      "bytes": 2166
+    },
+    "antigravity-task-runner/scripts/replay_fixtures.py": {
+      "sha256": "bbc2d6fef85df7f0d9e305a85118cfdb0cbaf868da774d46df914d988239b755",
+      "bytes": 1774
+    },
+    "antigravity-task-runner/scripts/run_workflow.py": {
+      "sha256": "cc9aa3743b58a8fc2c99bd7b7f81742f7da419cf7bbcc6e2bc85b0d75046142f",
+      "bytes": 55964
+    },
+    "antigravity-task-runner/tests/test_jev_review_gate.py": {
+      "sha256": "0a115e3c927b9519933a1ba3622d79a0882007204e9d03f5fcfd63e2441ad387",
+      "bytes": 18612
+    },
+    "antigravity-task-runner/tests/test_run_workflow.py": {
+      "sha256": "06b0188169452a9a9dd74740d0be1928256a48bba083f9c12ddae0c327a57099",
+      "bytes": 36399
+    },
+    "antigravity-task-runner/tests/test_workflows.py": {
+      "sha256": "4803a0871e59b25668b4199e881aebb997989e0ea3a4b09b633add22464ada3d",
+      "bytes": 2375
+    },
+    "global-config/AGENTS.md": {
+      "sha256": "45871c2aafe8308967459b74322b1f476090121043ba6526455d3d0b7f11026b",
+      "bytes": 2296
+    },
+    "install.py": {
+      "sha256": "2b93bcd1ab98edf6a8e9eeacdebcbd2997326fef1a8c0e99e0402bb7b6d91d2e",
+      "bytes": 3796
+    },
+    "jev-calibrated-decisions/SKILL.md": {
+      "sha256": "cb77bc5c8b14a1fa60a0a11ed825e650a4cea8fd5c4fc4cd2198d970236f3a65",
+      "bytes": 3337
+    },
+    "jev-calibrated-decisions/SUMMARY.vi.md": {
+      "sha256": "9eda89bfd057c382b2aa4d7805f5ff46939a875c3c1f1f114db3615209e93843",
+      "bytes": 1248
+    },
+    "jev-calibrated-decisions/agents/openai.yaml": {
+      "sha256": "b7092aaf459dc6808dbcdaeb062f73e96a41bf1c1d2f4d3daa6fa06a5cf47fb8",
+      "bytes": 360
+    },
+    "jev-calibrated-decisions/fixtures/image-negative.png": {
+      "sha256": "3d390005f3625c59c4ccef531b7cc3b4602bfa28c7f0f5ce063c4009678ed97f",
+      "bytes": 856
+    },
+    "jev-calibrated-decisions/fixtures/image-positive.png": {
+      "sha256": "e5d02ba29c699f30d023d29a6110b1ef6aaea5b050d6ca0d376e2892a915d7ac",
+      "bytes": 1525
+    },
+    "jev-calibrated-decisions/references/accuracy-playbook.md": {
+      "sha256": "1f6780f02125625de792001025eb1c34dd5ba1b680280526a435f0776fa594b2",
+      "bytes": 5384
+    },
+    "jev-calibrated-decisions/references/images.md": {
+      "sha256": "682afa2d334cb2ae6b852904b8d2a032b899684012e743aa353b6a6de632ee7c",
+      "bytes": 3965
+    },
+    "jev-calibrated-decisions/scripts/evaluate_results.py": {
+      "sha256": "44047384f909fb6c9aa18eb77ebde9d128c3a7823e1ea6bd551393129ce9d75e",
+      "bytes": 16959
+    },
+    "jev-calibrated-decisions/scripts/jev": {
+      "sha256": "685f104f2496672681bf699f761c0318ae443db6f696444ec9aab530e3129997",
+      "bytes": 319
+    },
+    "jev-calibrated-decisions/scripts/jev-pool": {
+      "sha256": "cb79b13992f584fa2628cf2b18adf8d868ec83a9e50ef0a336ef0d44b1313dc9",
+      "bytes": 7129
+    },
+    "jev-calibrated-decisions/scripts/jev.py": {
+      "sha256": "297fcade1a622ea61f6627ba16cb5c77913aa901a5a2beffdb137f2080ff130d",
+      "bytes": 116524
+    },
+    "jev-calibrated-decisions/tests/test_batch_metadata.py": {
+      "sha256": "02b631772347fe84e746a883f3c11a4a8fdf6929e3ca60d1635b9a0d9b9faeb9",
+      "bytes": 2379
+    },
+    "jev-calibrated-decisions/tests/test_evaluate_results.py": {
+      "sha256": "93c5e250ee1c6a6b2e2a0bd72514f57775836d5fd8ed519fc895a0476749e4b6",
+      "bytes": 12653
+    },
+    "jev-calibrated-decisions/tests/test_images.py": {
+      "sha256": "588f884b17f7f0c9ce136dca0877bab899fe63a15939ad4adfe0353a9e6951c6",
+      "bytes": 9062
+    },
+    "jev-calibrated-decisions/tests/test_key_pool.py": {
+      "sha256": "d1ae9c1d4d6ddb67eaed9f4499e48deac2e944fd95d0a2f0d28587f3970ee037",
+      "bytes": 8338
+    },
+    "licenses/typesafe-ai-skills-MIT.txt": {
+      "sha256": "835f233f1d6ed84a9b9a351aba0689b47644a4137d6316911fc7957bde523b02",
+      "bytes": 1068
+    }
+  }
+}

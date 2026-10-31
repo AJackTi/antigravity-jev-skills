@@ -1,0 +1,4 @@
+interface:
+  display_name: "Antigravity Quant Runner"
+  short_description: "Compact quant research and trading-logic audit"
+  default_prompt: "Use $antigravity-sol-quant-runner for causal quant implementation or audit, mechanical reconciliation, Jev evidence triage and two fresh Gemini 4 Argon High reviews; unresolved evidence never implies live approval."

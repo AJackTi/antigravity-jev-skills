@@ -1,0 +1,35 @@
+[
+  {
+    "name": "audited-pass",
+    "input": {
+      "task": "Validate causal entry signal",
+      "math_diff": "No production change",
+      "data": "fixture-v1; IS/validation/OOS; seed=7",
+      "friction": "maker/taker, slippage, funding included",
+      "results": "IS 120 trades; OOS 48 trades; MDD reported",
+      "leakage_test": "future-row perturbation unchanged",
+      "parity": "LONG/SHORT; 1x and max leverage",
+      "proof": "pytest -q: exit 0; go test: exit 0",
+      "verdict": "PASS",
+      "confidence": 91,
+      "residual_risk": "regime shift"
+    },
+    "expected_status": 0
+  },
+  {
+    "name": "unproven-pass",
+    "input": {"task": "Claim profitable strategy", "verdict": "PASS", "confidence": 99},
+    "expected_status": 1
+  },
+  {
+    "name": "blocked-unknown-cost",
+    "input": {
+      "task": "Evaluate backtest",
+      "friction": "unknown",
+      "verdict": "BLOCKED",
+      "proof": "none",
+      "confidence": "unknown"
+    },
+    "expected_status": 0
+  }
+]
