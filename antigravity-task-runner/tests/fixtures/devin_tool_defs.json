@@ -1,0 +1,144 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "mcp_call_tool",
+      "description": "Execute a tool on an MCP server. Use this to interact with external services like Linear, GitHub, Slack, databases, and more. The tool result will be returned as structured data.",
+      "parameters": {
+        "required": [
+          "server_name",
+          "tool_name"
+        ],
+        "properties": {
+          "server_name": {
+            "description": "Name of the MCP server to use (e.g., \"linear\", \"github\").",
+            "type": "string"
+          },
+          "tool_name": {
+            "description": "Name of the tool to execute.",
+            "type": "string"
+          },
+          "arguments": {
+            "description": "Input arguments for the tool as a JSON object.",
+            "type": "object",
+            "additionalProperties": true,
+            "default": {}
+          }
+        },
+        "type": "object",
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mcp_list_servers",
+      "description": "Lists all MCP servers you have access to. Use this first if the user is asking about any third party integrations (e.g. Slack, Linear, etc).",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mcp_list_tools",
+      "description": "List available tools and resources from MCP servers. Use this to discover what capabilities are available before calling mcp_call_tool.",
+      "parameters": {
+        "properties": {
+          "server_name": {
+            "description": "Name of the MCP server to list tools from (e.g., \"linear\", \"github\"). If not provided, lists tools from all configured servers.",
+            "type": "string"
+          }
+        },
+        "type": "object",
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mcp_read_resource",
+      "description": "Read a resource from an MCP server. Resources can be files, database records, API responses, or any data exposed by the MCP server. Returns the resource content as text or binary data.",
+      "parameters": {
+        "required": [
+          "server_name",
+          "resource_uri"
+        ],
+        "properties": {
+          "server_name": {
+            "description": "Name of the MCP server (e.g., \"linear\", \"github\").",
+            "type": "string"
+          },
+          "resource_uri": {
+            "description": "Resource URI to read (e.g., \"<file:///path/to/file>\", \"<linear://issue/123>\").",
+            "type": "string"
+          }
+        },
+        "type": "object",
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "skill",
+      "description": "Invoke or discover skills. Modes: 'invoke' (default) activates a skill by name; 'list' and 'search' accept exactly one source, either a project `path` or `source: \"plugins\"` for active plugin skills. 'list' scans only the project root; 'search' recurses and filters by optional keywords. Use plugin search before concluding that a referenced plugin skill does not exist.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "default": "invoke",
+            "description": "The skill operation to perform. Defaults to \"invoke\" if omitted.",
+            "type": "string",
+            "enum": [
+              "invoke",
+              "list",
+              "search"
+            ]
+          },
+          "skill": {
+            "description": "The name of the skill to invoke (required for 'invoke' command).\nUse one of the available skills listed in the system prompt.",
+            "type": "string",
+            "default": null
+          },
+          "path": {
+            "description": "Project path to discover skills in. Scans skill directories (e.g.\n.devin/skills/) at the project root; `list` does not recurse into\nsubdirectories, while `search` does. Relative paths are resolved\nagainst the session's working directory. Provide either `path` or\n`source` for list/search, not both.",
+            "type": "string",
+            "default": null
+          },
+          "source": {
+            "description": "Set to `plugins` to list or search active plugin skills instead of\nscanning a project path.",
+            "type": "string",
+            "enum": [
+              "plugins"
+            ]
+          },
+          "keywords": {
+            "description": "List of keywords to search for. Empty or omitted means include all skills.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": null
+          },
+          "keywords_mode": {
+            "type": "string",
+            "enum": [
+              "or",
+              "and"
+            ],
+            "description": "Controls whether all keywords or any keyword need to be present.",
+            "default": "or"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+]

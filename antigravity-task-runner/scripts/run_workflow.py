@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Headless workflow runner: Gemini worker -> mechanical checks -> Jev triage -> fresh Gemini review(s) -> bounded rework."""
+"""Headless workflow runner: worker (agy AGY_MODEL, WORKFLOW_WORKER=devin tool-free swe-1-6-slow, or WORKFLOW_WORKER=opencode tool-free OPENCODE_MODEL) -> mechanical checks -> Jev triage -> fresh AGY_MODEL review(s) -> bounded rework."""
 from __future__ import annotations
 
 import argparse
@@ -7,9 +7,11 @@ import difflib
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -19,13 +21,25 @@ GATE_PATH = SCRIPT_DIR / 'jev_review_gate.py'
 _spec = importlib.util.spec_from_file_location('jev_review_gate', GATE_PATH)
 gate = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(gate)
+DEVIN_PATH = SCRIPT_DIR / 'devin_worker.py'
+_devin_spec = importlib.util.spec_from_file_location('devin_worker', DEVIN_PATH)
+devin = importlib.util.module_from_spec(_devin_spec)
+_devin_spec.loader.exec_module(devin)
+OPENCODE_PATH = SCRIPT_DIR / 'opencode_worker.py'
+_opencode_spec = importlib.util.spec_from_file_location('opencode_worker', OPENCODE_PATH)
+opencode = importlib.util.module_from_spec(_opencode_spec)
+_opencode_spec.loader.exec_module(opencode)
 
-GEMINI_MODEL = gate.GEMINI_MODEL
+GEMINI_MODEL = gate.GEMINI_MODEL  # compatibility alias for the default AGY_MODEL
+DEVIN_MODEL = gate.DEVIN_MODEL
 JEV_MODEL = gate.JEV_MODEL
 MAX_REWORK_LIMIT = 2
 MAX_HANDOFF_CHARS = 1500
 MAX_CONTRACT_CHARS = 8000
 MAX_DIFF_CHARS = 12000
+DEFAULT_VERIFY_TIMEOUT = 120
+MIN_VERIFY_TIMEOUT = 1
+MAX_VERIFY_TIMEOUT = 1800
 PROTECTED_PATH_RE = re.compile(
     r'(?i)(?:^|/)(?:\.env(?:\..+)?|credentials?\b.*|secrets?\b.*|configs?/live/.*|.*exchange[_-]?endpoint.*|.*live[_-]?config.*)$'
 )
@@ -41,8 +55,24 @@ DENIAL_PATTERNS = (
 )
 BLOCKED_RESPONSE_RE = re.compile(r'(?im)^\s*(?:verdict|status|outcome)?\s*[:=-]?\s*BLOCKED\b')
 UNITTEST_RAN_RE = re.compile(r'\bRan\s+(\d+)\s+tests?\b')
-PYTEST_PASSED_RE = re.compile(r'\b(\d+)\s+passed\b')
+PYTEST_PASSED_RE = re.compile(
+    r'(?m)^\s*(?:=+\s*)?(?:\d+\s+(?!failed\b|errors?\b)\w+,\s*)*(\d+)\s+passed\b(?:(?!\s*,\s*\d+\s+(?:failed|errors?)\b)\s*,|\s+in\s+[\d.]+s\b|\s*=+|\s*$)'
+)
 GO_PASS_RE = re.compile(r'(?m)^--- PASS:')
+ANSI_SGR_RE = re.compile(r'\x1b\[[0-9;]*m')
+_NK = r'(?:tests|suites|pass|fail|cancelled|skipped|todo|duration_ms)'
+NODE_SUMMARY_LINE_RE = re.compile(rf'^(?P<prefix>ℹ\ufe0f?|#)[ \t]+(?P<key>{_NK})[ \t]+(?P<value>\S+)[ \t]*$')
+NODE_COUNTER_CANDIDATE_RE = re.compile(rf'^\s*(?:ℹ\ufe0f?|#)[ \t]*{_NK}\b.*$')
+NODE_INLINE_COUNTER_RE = re.compile(rf'(?:ℹ\ufe0f?|#)[ \t]*{_NK}[ \t]*[:=]?\s*[-+]?\d')
+NODE_SPEC_LINE_RE = re.compile(r'^\s*[✔✖ℹ]\ufe0f?(?:[ \t]+|$)')
+NODE_SPEC_FAIL_LINE_RE = re.compile(r'^\s*✖\ufe0f?(?:[ \t]+|$)')
+NODE_TAP_POINT_RE = re.compile(r'^\s*(?:not )?ok[ \t]+\d+(?:[ \t]+[-#].*|[ \t]*)$')
+NODE_TAP_MARKER_RE = re.compile(
+    r'^(?:TAP version \d+[ \t]*|1\.\.\d+(?:[ \t]+#.*)?[ \t]*|\s*(?:not )?ok[ \t]+\d+(?:[ \t]+[-#].*|[ \t]*)|\s*#[ \t]+Subtest:.*)$'
+)
+NODE_TAP_FAIL_LINE_RE = re.compile(r'^\s*not ok[ \t]+\d+\b(?![^\n]*#[ \t]*(?i:TODO|SKIP)\b)')
+NONNEG_INT_RE = re.compile(r'^\d+$')
+NONNEG_FLOAT_RE = re.compile(r'^\d+(?:\.\d+)?$')
 CONFLICT_MARKER_RE = re.compile(r'(?m)^(?:<{7}|={7}|>{7})(?:\s|$)')
 SENTENCE_SPLIT_RE = re.compile(r'\.\s+(?=[A-Z])')
 FILE_TOKEN_RE = re.compile(r'[A-Za-z0-9_./-]+(?:\.[A-Za-z0-9_-]+)+')
@@ -250,23 +280,210 @@ def build_focused_diff(before: dict[str, bytes], after: dict[str, bytes], change
     return '\n'.join(chunks).strip()
 
 
-def parse_test_count(output: str, exit_code: int) -> int:
-    if exit_code != 0:
+def _parse_node_test_count(cleaned: str) -> int | None:
+    lines = [ln.rstrip('\r') for ln in cleaned.splitlines()]
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if not lines:
+        return None
+    idxs = [i for i, ln in enumerate(lines) if NODE_COUNTER_CANDIDATE_RE.match(ln)]
+    if not idxs:
+        if '\u2139' in cleaned or any(
+            NODE_SPEC_LINE_RE.match(ln)
+            or NODE_TAP_MARKER_RE.match(ln)
+            or (not NODE_TAP_POINT_RE.match(ln) and NODE_INLINE_COUNTER_RE.search(ln))
+            for ln in lines
+        ):
+            return 0
+        return None
+    start = idxs[0]
+    if idxs != list(range(start, len(lines))):
         return 0
-    m = UNITTEST_RAN_RE.search(output)
+    pfxs: set[str] = set()
+    cnts: dict[str, int] = {}
+    seen: set[str] = set()
+    for ln in lines[start:]:
+        m = NODE_SUMMARY_LINE_RE.match(ln)
+        if not m or m['key'] in seen:
+            return 0
+        pfxs.add('ℹ' if m['prefix'].startswith('ℹ') else '#')
+        k, v = m['key'], m['value']
+        seen.add(k)
+        if k == 'duration_ms':
+            if not NONNEG_FLOAT_RE.match(v):
+                return 0
+        elif NONNEG_INT_RE.match(v):
+            cnts[k] = int(v)
+        else:
+            return 0
+    if len(pfxs) != 1 or not {'tests', 'pass', 'fail'} <= set(cnts):
+        return 0
+    pfx = next(iter(pfxs))
+    for ln in lines[:start]:
+        if (
+            NODE_SPEC_FAIL_LINE_RE.match(ln)
+            or NODE_TAP_FAIL_LINE_RE.match(ln)
+            or (not NODE_TAP_POINT_RE.match(ln) and NODE_INLINE_COUNTER_RE.search(ln))
+            or (pfx == '#' and ('\u2139' in ln or NODE_SPEC_LINE_RE.match(ln)))
+            or (pfx == 'ℹ' and NODE_TAP_MARKER_RE.match(ln))
+        ):
+            return 0
+    tot, ok, fail = cnts['tests'], cnts['pass'], cnts['fail']
+    canc, skip, todo = cnts.get('cancelled', 0), cnts.get('skipped', 0), cnts.get('todo', 0)
+    if tot <= 0 or ok <= 0 or ok > tot or fail != 0 or canc != 0 or ok + fail + canc + skip + todo != tot:
+        return 0
+    return ok
+
+
+def parse_test_count(output: str, exit_code: int) -> int:
+    if type(exit_code) is not int or exit_code != 0 or not isinstance(output, str):
+        return 0
+    cleaned = ANSI_SGR_RE.sub('', output)
+    node_count = _parse_node_test_count(cleaned)
+    if node_count is not None:
+        return node_count
+    m = UNITTEST_RAN_RE.search(cleaned)
     if m:
-        if re.search(r'(?m)^FAILED\b', output):
+        if re.search(r'(?m)^FAILED\b', cleaned):
             return 0
         return int(m.group(1))
-    m = PYTEST_PASSED_RE.search(output)
+    m = PYTEST_PASSED_RE.search(cleaned)
     if m:
         return int(m.group(1))
-    go_passes = len(GO_PASS_RE.findall(output))
+    go_passes = len(GO_PASS_RE.findall(cleaned))
     if go_passes > 0:
         return go_passes
-    if re.search(r'\bOK\b', output):
+    if not re.search(r'(?m)^FAILED\b', cleaned) and re.search(r'(?m)^\s*OK(?:\s*\([^)\n]*\))?\s*$', cleaned):
         return 1
     return 0
+
+
+def validate_verify_timeout(verify_timeout: int) -> int:
+    if type(verify_timeout) is not int or not MIN_VERIFY_TIMEOUT <= verify_timeout <= MAX_VERIFY_TIMEOUT:
+        raise ValueError(f'verify_timeout must be an integer in {MIN_VERIFY_TIMEOUT}..{MAX_VERIFY_TIMEOUT}')
+    return verify_timeout
+
+
+RTK_FILTER_TIMEOUT = 10
+
+
+def resolve_rtk_executable() -> str | None:
+    candidates = [Path(found) for found in (shutil.which('rtk'),) if found]
+    candidates.extend((Path('/opt/homebrew/bin/rtk'), Path('/usr/local/bin/rtk'), Path.home() / '.local/bin' / 'rtk'))
+    for candidate in candidates:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate.resolve())
+    return None
+
+
+def _is_supported_pytest_output(cleaned: str, exit_code: int, passed_count: int) -> bool:
+    if type(exit_code) is not int or exit_code != 0 or type(passed_count) is not int or passed_count <= 0 or not cleaned.strip():
+        return False
+    if _parse_node_test_count(cleaned) is not None or UNITTEST_RAN_RE.search(cleaned) or GO_PASS_RE.search(cleaned):
+        return False
+    matches = list(PYTEST_PASSED_RE.finditer(cleaned))
+    return bool(matches) and not re.search(r'(?m)^FAILED\b', cleaned) and sum(int(m.group(1)) for m in matches) == passed_count
+
+
+def _parse_rtk_pytest_passed(filtered_text: str) -> int | None:
+    cleaned = ANSI_SGR_RE.sub('', filtered_text or '').strip()
+    if not cleaned or re.search(r'(?i)\b(?:no tests collected|failed|errors?|traceback)\b', cleaned):
+        return None
+    stripped = re.sub(r'(?m)^(\s*)Pytest:\s*', r'\1', cleaned)
+    if not PYTEST_PASSED_RE.search(stripped):
+        return None
+    count = parse_test_count(stripped, 0)
+    return count if count > 0 else None
+
+
+def filter_verification_output(
+    raw_output: str,
+    exit_code: int,
+    passed_count: int,
+    *,
+    attempt_dir: Path | None = None,
+) -> dict[str, object]:
+    """Postprocess verified passing pytest logs via `rtk pipe -f pytest`; fall back to raw on any mismatch or error."""
+    raw_text = str(raw_output or '')
+    cleaned = ANSI_SGR_RE.sub('', raw_text)
+    effective = raw_text
+    rtk_applied = False
+    filtered_passed: int | None = None
+    rtk_exe: str | None = None
+    eligible = _is_supported_pytest_output(cleaned, exit_code, passed_count)
+    if type(exit_code) is not int or exit_code != 0 or type(passed_count) is not int or passed_count <= 0:
+        reason = 'failing or zero-count test output kept raw'
+    elif not eligible:
+        reason = 'unsupported test runner format (not pytest); raw output retained'
+    else:
+        rtk_exe = resolve_rtk_executable()
+        if not rtk_exe:
+            reason = 'rtk executable unavailable; raw output retained'
+        else:
+            try:
+                res = subprocess.run(
+                    [rtk_exe, 'pipe', '-f', 'pytest'],
+                    input=raw_text,
+                    text=True,
+                    capture_output=True,
+                    timeout=RTK_FILTER_TIMEOUT,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired:
+                reason = 'rtk filter timed out; raw output retained'
+            except (OSError, ValueError):
+                reason = 'rtk filter execution failed; raw output retained'
+            else:
+                candidate = (res.stdout or '').strip()
+                if res.returncode != 0:
+                    reason = f'rtk filter exited {res.returncode}; raw output retained'
+                elif not candidate:
+                    reason = 'rtk filter returned empty output; raw output retained'
+                else:
+                    filtered_passed = _parse_rtk_pytest_passed(candidate)
+                    if filtered_passed is None:
+                        reason = 'rtk output unparseable or reports no tests/failure; raw output retained'
+                    elif filtered_passed != passed_count:
+                        reason = f'rtk filtered passed count ({filtered_passed}) did not match raw passed count ({passed_count}); raw output retained'
+                    else:
+                        rtk_applied = True
+                        effective = candidate
+                        reason = 'applied rtk pipe -f pytest with matching passed count'
+    raw_b = raw_text.encode('utf-8')
+    eff_b = effective.encode('utf-8')
+    meta: dict[str, object] = {
+        'rtk_applied': rtk_applied,
+        'applied': rtk_applied,
+        'reason': reason,
+        'filter': 'rtk pipe -f pytest' if eligible else None,
+        'rtk_executable': rtk_exe,
+        'raw_exit_code': exit_code,
+        'raw_passed': passed_count,
+        'filtered_passed': filtered_passed,
+        'raw_chars': len(raw_text),
+        'filtered_chars': len(effective),
+        'saved_chars': len(raw_text) - len(effective),
+        'raw_bytes': len(raw_b),
+        'filtered_bytes': len(eff_b),
+        'saved_bytes': len(raw_b) - len(eff_b),
+        'raw_sha256': hashlib.sha256(raw_b).hexdigest(),
+        'filtered_sha256': hashlib.sha256(eff_b).hexdigest(),
+        'raw_output': raw_text,
+        'filtered_output': effective,
+    }
+    if attempt_dir is not None:
+        attempt_dir = Path(attempt_dir)
+        attempt_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        raw_path = attempt_dir / 'verification-raw.txt'
+        filt_path = attempt_dir / 'verification-filtered.txt'
+        raw_path.write_text(gate.redact(raw_text), encoding='utf-8')
+        filt_path.write_text(gate.redact(effective), encoding='utf-8')
+        meta['raw_artifact'] = str(raw_path)
+        meta['filtered_artifact'] = str(filt_path)
+    return meta
+
+
+postprocess_verification_output = filter_verification_output
 
 
 def run_mechanical_checks(
@@ -274,7 +491,10 @@ def run_mechanical_checks(
     baseline_snapshot: dict[str, bytes],
     scope_files: list[str],
     verify_cmds: list[str],
+    verify_timeout: int = DEFAULT_VERIFY_TIMEOUT,
+    attempt_dir: Path | None = None,
 ) -> dict[str, object]:
+    effective_verify_timeout = validate_verify_timeout(verify_timeout)
     current_snapshot = snapshot_workspace(workspace)
     changed, deleted = compute_changed_files(baseline_snapshot, current_snapshot)
     all_touched = sorted(set(changed) | set(deleted))
@@ -310,7 +530,14 @@ def run_mechanical_checks(
     for cmd in cmds:
         try:
             argv = shlex.split(cmd)
-            res = subprocess.run(argv, cwd=workspace, text=True, capture_output=True, timeout=120, check=False)
+            res = subprocess.run(
+                argv,
+                cwd=workspace,
+                text=True,
+                capture_output=True,
+                timeout=effective_verify_timeout,
+                check=False,
+            )
             combined = ((res.stdout or '') + ('\n' + res.stderr if res.stderr else '')).strip()
             test_outputs.append(f'$ {cmd} (exit {res.returncode})\n{combined}'.strip())
             if res.returncode != 0:
@@ -388,6 +615,10 @@ def run_mechanical_checks(
         else None
     )
     checks = [tests_check, scope_check, whitespace_check]
+    rtk_meta = filter_verification_output(tests_check['output'], test_exit, total_passed, attempt_dir=attempt_dir)
+    rtk_summary = {k: v for k, v in rtk_meta.items() if k not in ('raw_output', 'filtered_output')}
+    if rtk_meta['rtk_applied']:
+        rtk_summary['filtered_summary'] = rtk_meta['filtered_output']
     all_passed = all(c['exit_code'] == 0 for c in checks) and total_passed > 0 and not out_of_scope and not oversized_diff
     return {
         'all_passed': all_passed,
@@ -399,6 +630,7 @@ def run_mechanical_checks(
         'changed_files': changed,
         'deleted_files': deleted,
         'checks': checks,
+        'rtk_verification': rtk_summary,
         'snapshot': current_snapshot,
         'source_hashes': file_hashes(current_snapshot, changed),
         'focused_diff': focused_diff,
@@ -446,6 +678,7 @@ def run_worker_attempt(
     prev_raw_by_cid: dict[str, dict[str, int]] | None = None,
 ) -> dict[str, object]:
     attempt_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    model = gate.selected_model()  # raises before any external call if unsupported
     settings_path = attempt_dir / 'worker-settings.json'
     settings = build_worker_settings(workspace, scope_files, verify_cmds)
     gate.save(settings_path, settings)
@@ -456,7 +689,7 @@ def run_worker_attempt(
     except OSError:
         gate.save(
             attempt_dir / 'worker-invocation.json',
-            {'requested_executable': 'agy', 'state': 'UNAVAILABLE', 'model': GEMINI_MODEL, 'effort': 'high', 'exit_code': None},
+            {'requested_executable': 'agy', 'state': 'UNAVAILABLE', 'model': model, 'effort': 'high', 'exit_code': None},
         )
         return {
             'ok': False,
@@ -468,7 +701,7 @@ def run_worker_attempt(
 
     argv = [
         executable,
-        '--model', GEMINI_MODEL,
+        '--model', model,
         '--effort', 'high',
         '--settings', str(settings_path),
         '--print-timeout', f'{int(timeout_seconds)}s',
@@ -483,7 +716,7 @@ def run_worker_attempt(
         {
             'argv': argv,
             'state': 'STARTING',
-            'model': GEMINI_MODEL,
+            'model': model,
             'effort': 'high',
             'resumed_from': resume_conversation_id,
             'prompt_tokens_est': estimate_tokens(prompt),
@@ -501,7 +734,7 @@ def run_worker_attempt(
         (attempt_dir / 'worker.stderr.txt').write_text(gate.redact(err_txt), encoding='utf-8')
         gate.save(
             attempt_dir / 'worker-timeout.json',
-            {'timed_out': True, 'exit_code': None, 'model_argument': GEMINI_MODEL, 'effort_argument': 'high', 'duration_seconds': duration},
+            {'timed_out': True, 'exit_code': None, 'model_argument': model, 'effort_argument': 'high', 'duration_seconds': duration},
         )
         return {
             'ok': False,
@@ -600,14 +833,17 @@ def run_worker_attempt(
     block_reasons: list[str] = []
     if result.returncode != 0:
         block_reasons.append(f'worker exited with code {result.returncode}')
-    if model_actual != GEMINI_MODEL:
+    if model_actual != model:
         block_reasons.append(f'unexpected worker model: {model_actual!r}')
     if effort_field != 'high':
         block_reasons.append(f'unexpected worker effort: {effort_field!r}')
-    if perm_mode and perm_mode != 'request-review':
+    if perm_mode != 'request-review':  # missing init.permission_mode also blocks
         block_reasons.append(f'unexpected worker permission_mode: {perm_mode!r}')
     if status != 'SUCCESS':
         block_reasons.append(f'worker terminal status {status!r}')
+    finished_reason = f"{terminal.get('finished_reason') or ''} {terminal.get('finish_reason') or ''}".lower()
+    if 'timeout' in finished_reason or 'timed_out' in finished_reason:
+        block_reasons.append('worker terminal finished_reason reports timeout (BLOCKED even if status is SUCCESS)')
     if tool_denied:
         block_reasons.append('worker encountered tool permission denial or timeout')
     if not response_text:
@@ -621,10 +857,11 @@ def run_worker_attempt(
         'ok': len(block_reasons) == 0,
         'blocked': len(block_reasons) > 0,
         'reason': '; '.join(block_reasons) if block_reasons else None,
+        'requested_model': model,
         'model': model_actual,
         'effort': 'high' if effort_field == 'high' else effort_field,
         'effort_verification': effort_verification,
-        'permission_mode': perm_mode or 'request-review',
+        'permission_mode': perm_mode,
         'conversation_id': cid,
         'exit_code': result.returncode,
         'status': status,
@@ -659,11 +896,46 @@ def aggregate_external_usage(external_steps: list[dict[str, object]]) -> dict[st
     jev_out = 0
     jev_total = 0
     updates = 0
+    devin_totals = {k: 0 for k in devin.FINAL_METRIC_KEYS}
+    devin_sessions = 0
+    opencode_totals = {k: 0 for k in opencode.OPENCODE_METRIC_KEYS}
+    opencode_sessions = 0
+    opencode_steps_seen = 0
+    opencode_unverified = False
 
     for step in external_steps:
         usage = step.get('usage') if isinstance(step.get('usage'), dict) else {}
         updates += int(step.get('usage_updates_observed', 1) or 1)
-        if step.get('model') == JEV_MODEL or step.get('role') == 'jev':
+        if step.get('provider') == 'devin':
+            # Provider-specific ATIF counters; never pooled into the legacy agy/'gemini' bucket.
+            if usage and all(type(usage.get(k)) is int and usage[k] >= 0 for k in devin.FINAL_METRIC_KEYS):
+                devin_sessions += 1
+                for k in devin.FINAL_METRIC_KEYS:
+                    devin_totals[k] += usage[k]
+        elif step.get('provider') == 'opencode':
+            # Provider-specific OpenCode counters; never pooled into 'gemini' or 'devin'.
+            opencode_steps_seen += 1
+            if (
+                usage
+                and all(type(usage.get(k)) is int and usage[k] >= 0 for k in opencode.OPENCODE_METRIC_KEYS)
+                and usage['input_tokens'] > 0
+                and usage['output_tokens'] > 0
+                and usage['total_steps'] > 0
+                and usage['total_tokens']
+                == (
+                    usage['input_tokens']
+                    + usage['output_tokens']
+                    + usage['reasoning_tokens']
+                    + usage['cache_read_tokens']
+                    + usage['cache_write_tokens']
+                )
+            ):
+                opencode_sessions += 1
+                for k in opencode.OPENCODE_METRIC_KEYS:
+                    opencode_totals[k] += usage[k]
+            else:
+                opencode_unverified = True
+        elif step.get('model') == JEV_MODEL or step.get('role') == 'jev':
             i = int(usage.get('input_tokens', 0) or 0)
             o = int(usage.get('output_tokens', 0) or 0)
             t = int(usage.get('total_tokens', i + o) or (i + o))
@@ -682,6 +954,11 @@ def aggregate_external_usage(external_steps: list[dict[str, object]]) -> dict[st
             gemini_cache_read += cr
             gemini_total += t
 
+    opencode_summary = (
+        {k: 'unknown' for k in opencode.OPENCODE_METRIC_KEYS}
+        if (opencode_steps_seen > 0 and (opencode_unverified or opencode_sessions == 0))
+        else dict(opencode_totals)
+    )
     return {
         'gemini': {
             'input_tokens': gemini_in,
@@ -697,6 +974,17 @@ def aggregate_external_usage(external_steps: list[dict[str, object]]) -> dict[st
             'output_tokens': jev_out,
             'total_tokens': jev_total,
         },
+        'devin': {
+            'sessions_with_verified_usage': devin_sessions,
+            **devin_totals,
+            'basis': devin.USAGE_BASIS,
+        },
+        'opencode': {
+            'sessions_with_verified_usage': opencode_sessions,
+            **opencode_summary,
+            'basis': opencode.OPENCODE_USAGE_BASIS,
+        },
+        'legacy_key_note': "'gemini' is the legacy key for agy usage of the selected AGY_MODEL only; Devin and OpenCode usage appear only under 'devin' and 'opencode'",
         'combined_non_cache_total_tokens': gemini_total + jev_total,
         'usage_updates_observed': updates,
     }
@@ -721,6 +1009,39 @@ def format_proof_pack(report: dict[str, object]) -> str:
     usage_tot = report.get('usage_totals', {})
     gem_u = usage_tot.get('gemini', {})
     jev_u = usage_tot.get('jev', {})
+    dev_u = usage_tot.get('devin', {})
+    opc_u = usage_tot.get('opencode', {})
+    if report.get('worker_provider') == 'devin':
+        usage_line = (
+            f"USAGE: worker=devin:{report.get('worker_model')} (ATIF-verified, Normal, 0 tools, no effort claim) "
+            f"sessions={dev_u.get('sessions_with_verified_usage', 0)} prompt={dev_u.get('total_prompt_tokens', 0)} "
+            f"completion={dev_u.get('total_completion_tokens', 0)} cached={dev_u.get('total_cached_tokens', 0)}; "
+            f"reviewer=agy:{report.get('reviewer_model')} high agy_total={gem_u.get('total_tokens', 0)} "
+            f"(in={gem_u.get('input_tokens', 0)}, out={gem_u.get('output_tokens', 0)}) jev_total={jev_u.get('total_tokens', 0)}"
+        )
+    elif report.get('worker_provider') == 'opencode':
+        usage_line = (
+            f"USAGE: worker=opencode:{report.get('worker_model')} (export-verified, deny-all, 0 tools, no effort claim) "
+            f"sessions={opc_u.get('sessions_with_verified_usage', 0)} in={opc_u.get('input_tokens', 'unknown')} "
+            f"out={opc_u.get('output_tokens', 'unknown')} reasoning={opc_u.get('reasoning_tokens', 'unknown')} "
+            f"cache_read={opc_u.get('cache_read_tokens', 'unknown')} cache_write={opc_u.get('cache_write_tokens', 'unknown')} "
+            f"total={opc_u.get('total_tokens', 'unknown')}; "
+            f"reviewer=agy:{report.get('reviewer_model')} high agy_total={gem_u.get('total_tokens', 0)} "
+            f"(in={gem_u.get('input_tokens', 0)}, out={gem_u.get('output_tokens', 0)}) jev_total={jev_u.get('total_tokens', 0)}"
+        )
+    else:
+        usage_line = (
+            f"USAGE: agy_model={report.get('worker_and_reviewer_model')} agy_total={gem_u.get('total_tokens', 0)} "
+            f"(in={gem_u.get('input_tokens', 0)}, out={gem_u.get('output_tokens', 0)}, cache_read={gem_u.get('cache_read_tokens', 0)}) "
+            f"jev_total={jev_u.get('total_tokens', 0)}"
+        )
+    ctx_opt = report.get('context_optimization') or {}
+    ctx_line = (
+        f"CONTEXT: mode={report.get('context_mode')} prompt_chars={report.get('prompt_chars')} "
+        f"rtk_applied={ctx_opt.get('rtk_applied', False)} "
+        f"verify_bytes={ctx_opt.get('filtered_verification_bytes', 0)}/{ctx_opt.get('raw_verification_bytes', 0)} "
+        f"({ctx_opt.get('rtk_reason') or 'not run'})"
+    )
     lines = [
         f"TASK: {report.get('id')} — {report.get('task')}",
         f"VERDICT: {report.get('verdict')} (rework_loops={report.get('rework_loops')})",
@@ -728,9 +1049,10 @@ def format_proof_pack(report: dict[str, object]) -> str:
         f"HASHES: {hashes_str} (unchanged_during_review={report.get('source_hashes_unchanged_during_chatgpt_verification_and_review')})",
         f"CHANGE: {report.get('summary') or 'none'}",
         f"TESTS: `{report.get('coordinator_test_command')}` exit={report.get('test_exit_code')} passed={report.get('unique_tests_passed')}",
+        ctx_line,
         f"JEV: {jev_str}",
         f"REVIEW: {rev_str}",
-        f"USAGE: gemini_total={gem_u.get('total_tokens', 0)} (in={gem_u.get('input_tokens', 0)}, out={gem_u.get('output_tokens', 0)}, cache_read={gem_u.get('cache_read_tokens', 0)}) jev_total={jev_u.get('total_tokens', 0)}",
+        usage_line,
         f"RISK: {report.get('residual_risk') or '; '.join(report.get('reasons', [])) or 'Bounded scope only'}",
     ]
     return clamp_handoff('\n'.join(lines), max_chars=1400) + '\n'
@@ -750,6 +1072,7 @@ def run_workflow(
     min_reviewers: int | None = None,
     max_reworks: int = MAX_REWORK_LIMIT,
     worker_timeout: int = 300,
+    verify_timeout: int = DEFAULT_VERIFY_TIMEOUT,
     open_questions: list[str] | None = None,
     quant_contract: dict[str, str] | None = None,
     require_stronger_reviewer: bool = False,
@@ -757,6 +1080,9 @@ def run_workflow(
     authorized_protected: bool = False,
     triage_only: bool = False,
     resume_worker: bool = True,
+    worker_provider: str | None = None,
+    opencode_model: str | None = None,
+    context_mode: str | None = None,
 ) -> dict[str, object]:
     workspace = Path(workspace).resolve()
     output_dir = Path(output_dir).resolve()
@@ -775,6 +1101,44 @@ def run_workflow(
 
     # Pre-flight safety / authorization / quant checks
     preflight_blockers: list[str] = []
+    try:
+        worker_kind = opencode.resolve_worker(worker_provider)  # WORKFLOW_WORKER: agy (default) | devin | opencode
+    except ValueError as exc:  # unknown provider: no worker/Jev/reviewer call
+        worker_kind = None
+        preflight_blockers.append(str(exc))
+    is_devin = worker_kind == 'devin'
+    is_opencode = worker_kind == 'opencode'
+    opencode_full_model: str | None = None
+    if is_opencode:
+        try:
+            opencode_full_model, _, _ = opencode.resolve_opencode_model(opencode_model)
+        except (ValueError, opencode.OpenCodeBlocked) as exc:
+            preflight_blockers.append(str(exc))
+    try:
+        agy_model = gate.selected_model()  # always validated: selects fresh AGY reviewers (and the agy worker)
+    except ValueError as exc:  # unsupported AGY_MODEL: no worker/Jev/reviewer call
+        agy_model = None
+        preflight_blockers.append(str(exc))
+    try:
+        effective_context_mode = devin.resolve_context_mode(context_mode)  # WORKFLOW_CONTEXT: lean (default) | compact | full
+    except ValueError as exc:  # unsupported WORKFLOW_CONTEXT: no worker/Jev/reviewer call
+        effective_context_mode = None
+        preflight_blockers.append(str(exc))
+    is_external_non_agy = is_devin or is_opencode
+    identity = {
+        'worker_provider': worker_kind,
+        'worker_model': (
+            DEVIN_MODEL if is_devin else (opencode_full_model if is_opencode else agy_model)
+        ) if worker_kind else None,
+        'worker_effort': None if is_external_non_agy else 'high',
+        'reviewer_provider': 'agy',
+        'reviewer_model': agy_model,
+        'reviewer_effort': 'high',
+        # Legacy key: only meaningful when one agy model is both worker and reviewer.
+        'worker_and_reviewer_model': None if is_external_non_agy else agy_model,
+        'effort': None if is_external_non_agy else 'high',
+        'context_mode': effective_context_mode,
+    }
     if kind not in ('task', 'quant'):
         preflight_blockers.append('kind must be task or quant')
     if not effective_objective or not full_contract:
@@ -796,6 +1160,11 @@ def run_workflow(
                     preflight_blockers.append(f'write scope escapes workspace: {rel}')
     if int(max_reworks) > MAX_REWORK_LIMIT or int(max_reworks) < 0:
         preflight_blockers.append(f'max_reworks must be in 0..{MAX_REWORK_LIMIT}')
+    try:
+        effective_verify_timeout = validate_verify_timeout(verify_timeout)
+    except ValueError as exc:
+        effective_verify_timeout = DEFAULT_VERIFY_TIMEOUT
+        preflight_blockers.append(str(exc))
     if gate.contains_secret(full_contract):
         preflight_blockers.append('possible credential in task packet; redact before delegation')
     if not authorized_protected:
@@ -812,7 +1181,7 @@ def run_workflow(
             preflight_blockers.append('missing quant data/friction/causality/parity contract')
     if require_stronger_reviewer:
         preflight_blockers.append(
-            'stronger reviewer required; this runner only executes pinned gemini-4-argon-high reviewers '
+            f'stronger reviewer required; this runner only executes the selected AGY_MODEL ({agy_model}) as reviewer '
             '(same model in a fresh context is not stronger, and a caller-supplied model name is not verified execution proof)'
         )
 
@@ -827,8 +1196,18 @@ def run_workflow(
             'source_hashes': {},
             'source_hashes_unchanged_during_chatgpt_verification_and_review': True,
             'source_or_tests_written_by_chatgpt': 0,
-            'worker_and_reviewer_model': GEMINI_MODEL,
-            'effort': 'high',
+            **identity,
+            'prompt_chars': None,
+            'context_optimization': {
+                'context_mode': effective_context_mode,
+                'worker_provider': worker_kind,
+                'prompt_chars': None,
+                'rtk_applied': False,
+                'rtk_reason': 'preflight blocked before verification',
+                'raw_verification_bytes': 0,
+                'filtered_verification_bytes': 0,
+                'raw_evidence_authoritative': True,
+            },
             'effort_verification': 'preflight blocked before model invocation',
             'rework_loops': 0,
             'max_reworks': effective_max_reworks,
@@ -867,59 +1246,170 @@ def run_workflow(
     final_summary = ''
     final_residual_risk = ''
     hashes_unchanged = True
-    last_effort_verification = 'explicit --effort high plus init.model High slug; init omits separate effort'
+    last_prompt_chars: int | None = None
+    last_context_mode = effective_context_mode
+    last_effort_verification = (
+        'Devin worker: no effort claim (swe-1-6-slow); AGY reviewers: explicit --effort high plus -high slug'
+        if is_devin
+        else (
+            f'OpenCode worker: no effort claim ({opencode_full_model}); AGY reviewers: explicit --effort high plus -high slug'
+            if is_opencode
+            else 'explicit --effort high plus init.model High slug; init omits separate effort'
+        )
+    )
 
     for attempt_idx in range(effective_max_reworks + 1):
         attempt_num = attempt_idx + 1
         attempt_dir = output_dir / f'attempt-{attempt_num}'
         attempt_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-        if attempt_idx == 0:
-            prompt = build_initial_prompt(packet_text, effective_objective, effective_scope, effective_verify)
-            step_label = 'Gemini implementation'
-        else:
-            prompt = build_rework_prompt(
-                attempt_idx,
-                effective_max_reworks,
-                effective_objective,
-                effective_scope,
-                effective_verify,
-                pending_defects,
-                questions,
+        if is_devin:
+            # Every Devin attempt is a fresh session: original contract + current scoped source + concise feedback.
+            step_label = (
+                f'Devin worker generation ({DEVIN_MODEL})' if attempt_idx == 0
+                else f'Devin worker rework {attempt_idx} ({DEVIN_MODEL}, fresh session)'
             )
-            step_label = f'Gemini rework {attempt_idx}'
+            worker_res = devin.run_devin_attempt(
+                workspace=workspace,
+                attempt_dir=attempt_dir,
+                contract=full_contract,
+                scope_files=effective_scope,
+                verify_cmds=effective_verify,
+                timeout_seconds=worker_timeout,
+                feedback=devin.build_feedback(pending_defects) if attempt_idx > 0 else None,
+                open_questions=questions,
+                attempt=attempt_num,
+                max_attempts=effective_max_reworks + 1,
+                context_mode=effective_context_mode,
+            )
+            attempt_context_mode = worker_res.get('context_mode') or effective_context_mode
+            attempt_prompt_chars = worker_res.get('prompt_chars')
+        elif is_opencode:
+            # Every OpenCode attempt is a fresh session: original contract + current scoped source + concise feedback.
+            step_label = (
+                f'OpenCode worker generation ({opencode_full_model})' if attempt_idx == 0
+                else f'OpenCode worker rework {attempt_idx} ({opencode_full_model}, fresh session)'
+            )
+            worker_res = opencode.run_opencode_attempt(
+                workspace=workspace,
+                attempt_dir=attempt_dir,
+                contract=full_contract,
+                scope_files=effective_scope,
+                verify_cmds=effective_verify,
+                timeout_seconds=worker_timeout,
+                feedback=devin.build_feedback(pending_defects) if attempt_idx > 0 else None,
+                open_questions=questions,
+                attempt=attempt_num,
+                max_attempts=effective_max_reworks + 1,
+                context_mode=effective_context_mode,
+                requested_model=opencode_full_model,
+            )
+            attempt_context_mode = worker_res.get('context_mode') or effective_context_mode
+            attempt_prompt_chars = worker_res.get('prompt_chars')
+        else:
+            if attempt_idx == 0:
+                prompt = build_initial_prompt(packet_text, effective_objective, effective_scope, effective_verify)
+                step_label = f'Worker implementation ({agy_model})'
+            else:
+                prompt = build_rework_prompt(
+                    attempt_idx,
+                    effective_max_reworks,
+                    effective_objective,
+                    effective_scope,
+                    effective_verify,
+                    pending_defects,
+                    questions,
+                )
+                step_label = f'Worker rework {attempt_idx} ({agy_model})'
 
-        worker_res = run_worker_attempt(
-            workspace=workspace,
-            attempt_dir=attempt_dir,
-            prompt=prompt,
-            scope_files=effective_scope,
-            verify_cmds=effective_verify,
-            timeout_seconds=worker_timeout,
-            resume_conversation_id=worker_cid if (resume_worker and attempt_idx > 0) else None,
-            prev_raw_by_cid=prev_raw_by_cid,
-        )
+            worker_res = run_worker_attempt(
+                workspace=workspace,
+                attempt_dir=attempt_dir,
+                prompt=prompt,
+                scope_files=effective_scope,
+                verify_cmds=effective_verify,
+                timeout_seconds=worker_timeout,
+                resume_conversation_id=worker_cid if (resume_worker and attempt_idx > 0) else None,
+                prev_raw_by_cid=prev_raw_by_cid,
+            )
+            attempt_context_mode = effective_context_mode
+            attempt_prompt_chars = len(prompt)
 
-        if isinstance(worker_res.get('effort_verification'), str):
-            last_effort_verification = str(worker_res['effort_verification'])
+            if isinstance(worker_res.get('effort_verification'), str):
+                last_effort_verification = str(worker_res['effort_verification'])
 
-        external_steps.append(
-            {
-                'step': step_label,
-                'role': 'worker',
-                'attempt': attempt_num,
-                'model': worker_res.get('model') or GEMINI_MODEL,
-                'effort': worker_res.get('effort') or 'high',
-                'conversation_id': worker_res.get('conversation_id'),
-                'usage': worker_res.get('usage', {}),
-                'usage_basis': worker_res.get('usage_basis', 'initial CLI conversation counter'),
-                'raw_terminal_usage': worker_res.get('raw_terminal_usage', {}),
-                'usage_updates_observed': worker_res.get('usage_updates_observed', 0),
-                'exit_code': worker_res.get('exit_code'),
-                'duration_seconds': worker_res.get('duration_seconds', 0.0),
-                'status': 'BLOCKED' if worker_res.get('blocked') else 'SUCCESS',
-                'reason': worker_res.get('reason'),
-            }
-        )
+        last_context_mode = str(attempt_context_mode) if attempt_context_mode else effective_context_mode
+        if isinstance(attempt_prompt_chars, int):
+            last_prompt_chars = attempt_prompt_chars
+
+        if is_devin:
+            external_steps.append(
+                {
+                    'step': step_label,
+                    'role': 'worker',
+                    'provider': 'devin',
+                    'attempt': attempt_num,
+                    'requested_model': DEVIN_MODEL,
+                    'model': worker_res.get('model'),  # None unless ATIF-verified
+                    'effort': None,
+                    'context_mode': last_context_mode,
+                    'prompt_chars': last_prompt_chars,
+                    'conversation_id': worker_res.get('session_id'),
+                    'usage': worker_res.get('usage', {}),
+                    'usage_basis': worker_res.get('usage_basis', devin.USAGE_BASIS),
+                    'usage_updates_observed': worker_res.get('usage_updates_observed', 0),
+                    'exit_code': worker_res.get('exit_code'),
+                    'duration_seconds': worker_res.get('duration_seconds', 0.0),
+                    'status': 'BLOCKED' if worker_res.get('blocked') else 'VERIFIED',
+                    'files_applied': worker_res.get('files_written', []),
+                    'reason': worker_res.get('reason'),
+                }
+            )
+        elif is_opencode:
+            external_steps.append(
+                {
+                    'step': step_label,
+                    'role': 'worker',
+                    'provider': 'opencode',
+                    'attempt': attempt_num,
+                    'requested_model': opencode_full_model,
+                    'model': worker_res.get('model'),  # None unless stream+export-verified
+                    'effort': None,
+                    'context_mode': last_context_mode,
+                    'prompt_chars': last_prompt_chars,
+                    'conversation_id': worker_res.get('session_id'),
+                    'usage': worker_res.get('usage', {}),
+                    'usage_basis': worker_res.get('usage_basis', opencode.OPENCODE_USAGE_BASIS),
+                    'usage_updates_observed': worker_res.get('usage_updates_observed', 0),
+                    'exit_code': worker_res.get('exit_code'),
+                    'export_exit_code': worker_res.get('export_exit_code'),
+                    'duration_seconds': worker_res.get('duration_seconds', 0.0),
+                    'status': 'BLOCKED' if worker_res.get('blocked') else 'VERIFIED',
+                    'files_applied': worker_res.get('files_written', []),
+                    'reason': worker_res.get('reason'),
+                }
+            )
+        else:
+            external_steps.append(
+                {
+                    'step': step_label,
+                    'role': 'worker',
+                    'provider': 'agy',
+                    'attempt': attempt_num,
+                    'model': worker_res.get('model') or agy_model,
+                    'effort': worker_res.get('effort') or 'high',
+                    'context_mode': last_context_mode,
+                    'prompt_chars': last_prompt_chars,
+                    'conversation_id': worker_res.get('conversation_id'),
+                    'usage': worker_res.get('usage', {}),
+                    'usage_basis': worker_res.get('usage_basis', 'initial CLI conversation counter'),
+                    'raw_terminal_usage': worker_res.get('raw_terminal_usage', {}),
+                    'usage_updates_observed': worker_res.get('usage_updates_observed', 0),
+                    'exit_code': worker_res.get('exit_code'),
+                    'duration_seconds': worker_res.get('duration_seconds', 0.0),
+                    'status': 'BLOCKED' if worker_res.get('blocked') else 'SUCCESS',
+                    'reason': worker_res.get('reason'),
+                }
+            )
 
         if worker_res.get('blocked') or not worker_res.get('ok'):
             final_verdict = 'BLOCKED'
@@ -929,18 +1419,38 @@ def run_workflow(
                     'attempt': attempt_num,
                     'stage': 'worker',
                     'status': 'BLOCKED',
+                    'context_mode': last_context_mode,
+                    'prompt_chars': last_prompt_chars,
                     'reasons': final_reasons,
                     'artifact_dir': str(attempt_dir),
                 }
             )
             break
 
-        worker_cid = str(worker_res['conversation_id'])
+        worker_cid = str(worker_res['session_id'] if (is_devin or is_opencode) else worker_res['conversation_id'])
         final_summary = summarize_worker_response(str(worker_res.get('response') or ''))
 
         # Run coordinator mechanical verification
-        mech = run_mechanical_checks(workspace, baseline_snapshot, effective_scope, effective_verify)
+        mech = run_mechanical_checks(
+            workspace,
+            baseline_snapshot,
+            effective_scope,
+            effective_verify,
+            verify_timeout=effective_verify_timeout,
+            attempt_dir=attempt_dir,
+        )
         final_mech = mech
+        rtk_attempt = mech.get('rtk_verification', {})
+        gate.save(
+            attempt_dir / 'context-optimization.json',
+            {
+                'attempt': attempt_num,
+                'worker_provider': worker_kind,
+                'context_mode': last_context_mode,
+                'prompt_chars': last_prompt_chars,
+                'rtk': rtk_attempt,
+            },
+        )
         gate.save(attempt_dir / 'mechanical-checks.json', {k: v for k, v in mech.items() if k != 'snapshot'})
 
         # Out-of-scope file modifications fail closed immediately as BLOCKED
@@ -1001,26 +1511,115 @@ def run_workflow(
             final_reasons = ['mechanical verification failed after maximum rework loops', *failed_descriptions]
             break
 
-        # Mechanical checks passed -> build packet and invoke shared Jev -> fresh Gemini review gate
+        # Mechanical checks passed -> build packet and invoke shared Jev -> fresh AGY_MODEL review gate
         pre_review_hashes = dict(mech['source_hashes'])
-        packet: dict[str, object] = {
-            'schema_version': 1,
-            'id': f'{task_id}-attempt-{attempt_num}',
-            'kind': kind,
-            'objective': full_contract,
-            'worker': {
+        if is_devin:
+            packet_worker: dict[str, object] = {
+                'provider': 'devin',
+                'model': worker_res['model'],
+                'exit_code': worker_res['exit_code'],
+                'proof_status': worker_res['proof_status'],
+                'response': worker_res['response'],
+                'tool_denied': False,
+                'tool_calls': worker_res['tool_calls'],
+            }
+            worker_proof: dict[str, object] = {
+                'source': 'coordinator-parsed Devin ATIF export and stdout (not worker narrative)',
+                'provider': 'devin',
+                'requested_model': DEVIN_MODEL,
+                'actual_generation_model': worker_res['model'],
+                'agent_model_name': worker_res.get('agent_model_name'),
+                'permission_mode': worker_res.get('permission_mode'),
+                'schema_version': worker_res.get('schema_version'),
+                'exit_code': worker_res['exit_code'],
+                'tool_calls': worker_res['tool_calls'],
+                'tool_denied': False,
+                'stdout_matches_export': worker_res.get('stdout_matches_export'),
+                'stdout_normalization': worker_res.get('stdout_normalization'),
+                'session_id': worker_res.get('session_id'),
+                'generation_steps': worker_res.get('generation_steps'),
+                'applied_files': worker_res.get('files_written', []),
+                'application': 'coordinator mechanically applied model-authored UTF-8 bytes to exact declared paths after proof checks',
+            }
+        elif is_opencode:
+            packet_worker = {
+                'provider': 'opencode',
+                'requested_model': worker_res['requested_model'],
+                'model': worker_res['model'],
+                'provider_id': worker_res['provider_id'],
+                'model_id': worker_res['model_id'],
+                'exit_code': worker_res['exit_code'],
+                'export_exit_code': worker_res['export_exit_code'],
+                'proof_status': worker_res['proof_status'],
+                'response': worker_res['response'],
+                'tool_denied': False,
+                'tool_calls': worker_res['tool_calls'],
+            }
+            worker_proof = {
+                'source': 'coordinator-parsed OpenCode JSON stream, session export, and isolated config (not worker narrative)',
+                'provider': 'opencode',
+                'requested_model': worker_res['requested_model'],
+                'actual_generation_model': worker_res['model'],
+                'provider_id': worker_res['provider_id'],
+                'model_id': worker_res['model_id'],
+                'exit_code': worker_res['exit_code'],
+                'export_exit_code': worker_res['export_exit_code'],
+                'tool_calls': worker_res['tool_calls'],
+                'tool_denied': False,
+                'stream_matches_export': worker_res['stream_matches_export'],
+                'finish_reason': worker_res['finish_reason'],
+                'session_id': worker_res['session_id'],
+                'generation_steps': worker_res['generation_steps'],
+                'config_proof_status': worker_res['config_proof_status'],
+                'config_proof': worker_res['config_proof'],
+                'config_verified': worker_res['config_verified'],
+                'isolated_xdg': worker_res['isolated_xdg'],
+                'pure_mode': worker_res['pure_mode'],
+                'prelaunch_config_sha256': worker_res['prelaunch_config_sha256'],
+                'postrun_config_sha256': worker_res['postrun_config_sha256'],
+                'raw_stdout_sha256': worker_res['raw_stdout_sha256'],
+                'export_sha256': worker_res['export_sha256'],
+                'final_response_sha256': worker_res['final_response_sha256'],
+                'usage': worker_res['usage'],
+                'applied_files': worker_res.get('files_written', []),
+                'application': 'coordinator mechanically applied model-authored UTF-8 bytes to exact declared paths after proof checks',
+            }
+        else:
+            packet_worker = {
                 'model': worker_res['model'],
                 'effort': worker_res['effort'],
                 'exit_code': worker_res['exit_code'],
                 'status': worker_res['status'],
                 'response': worker_res['response'],
                 'tool_denied': False,
-            },
+            }
+            worker_proof = {
+                'source': 'coordinator-parsed agy init/result metadata (not worker narrative)',
+                'requested_model': worker_res.get('requested_model'),
+                'actual_init_model': worker_res['model'],
+                'permission_mode': worker_res.get('permission_mode'),
+                'effort': worker_res['effort'],
+                'effort_verification': worker_res.get('effort_verification'),
+                'status': worker_res['status'],
+                'exit_code': worker_res['exit_code'],
+                'tool_denied': bool(worker_res.get('tool_denied')),
+                'conversation_id': worker_res.get('conversation_id'),
+            }
+        packet: dict[str, object] = {
+            'schema_version': 1,
+            'id': f'{task_id}-attempt-{attempt_num}',
+            'kind': kind,
+            'objective': full_contract,
+            'worker': packet_worker,
             'checks': mech['checks'],
             'evidence': {
                 'focused_diff': mech['focused_diff'],
                 'verification_output': next(c['output'] for c in mech['checks'] if c['kind'] == 'tests'),
                 'summary': final_summary,
+                'summary_label': 'short redacted excerpt of the worker handoff; not the authoritative full response',
+                'full_worker_handoff': worker_res['response'],
+                'worker_proof': worker_proof,
+                'source_workspace': str(workspace),
                 'source_hashes': pre_review_hashes,
             },
             'open_questions': questions,
@@ -1043,7 +1642,7 @@ def run_workflow(
         j_tot = int(jev_u.get('total_tokens', j_in + j_out) or (j_in + j_out))
         external_steps.append(
             {
-                'step': 'Jev assessment',
+                'step': 'Jev đánh giá',
                 'role': 'jev',
                 'attempt': attempt_num,
                 'model': JEV_MODEL,
@@ -1066,10 +1665,11 @@ def run_workflow(
             )
             external_steps.append(
                 {
-                    'step': f'Gemini independent review {rev_idx}',
+                    'step': f'Independent review {rev_idx} ({agy_model})',
                     'role': 'reviewer',
+                    'provider': 'agy',
                     'attempt': attempt_num,
-                    'model': rev.get('model') or GEMINI_MODEL,
+                    'model': rev.get('model') or agy_model,
                     'effort': rev.get('effort') or 'high',
                     'conversation_id': rev_cid,
                     'usage': rev_delta,
@@ -1081,7 +1681,7 @@ def run_workflow(
                 }
             )
 
-        # Verify workspace files were not mutated during Jev/Gemini review
+        # Verify workspace files were not mutated during Jev/reviewer gate
         post_review_snapshot = snapshot_workspace(workspace)
         post_review_hashes = file_hashes(post_review_snapshot, mech['changed_files'])
         if post_review_hashes != pre_review_hashes or set(post_review_snapshot) != set(mech['snapshot']):
@@ -1167,6 +1767,30 @@ def run_workflow(
         break
 
     tests_check_final = next((c for c in final_mech.get('checks', []) if c.get('kind') == 'tests'), {})
+    rtk_final = final_mech.get('rtk_verification', {}) if isinstance(final_mech.get('rtk_verification'), dict) else {}
+    identity['context_mode'] = last_context_mode
+    context_opt_summary = {
+        'context_mode': last_context_mode,
+        'worker_provider': worker_kind,
+        'prompt_chars': last_prompt_chars,
+        'rtk_applied': bool(rtk_final.get('rtk_applied', False)),
+        'rtk_reason': rtk_final.get('reason', 'not run'),
+        'raw_verification_chars': int(rtk_final.get('raw_chars', 0) or 0),
+        'filtered_verification_chars': int(rtk_final.get('filtered_chars', 0) or 0),
+        'saved_verification_chars': int(rtk_final.get('saved_chars', 0) or 0),
+        'raw_verification_bytes': int(rtk_final.get('raw_bytes', 0) or 0),
+        'filtered_verification_bytes': int(rtk_final.get('filtered_bytes', 0) or 0),
+        'saved_verification_bytes': int(rtk_final.get('saved_bytes', 0) or 0),
+        'raw_verification_sha256': rtk_final.get('raw_sha256'),
+        'filtered_verification_sha256': rtk_final.get('filtered_sha256'),
+        'raw_passed': int(rtk_final.get('raw_passed', 0) or 0),
+        'filtered_passed': rtk_final.get('filtered_passed'),
+        'raw_artifact': rtk_final.get('raw_artifact'),
+        'filtered_artifact': rtk_final.get('filtered_artifact'),
+        'filtered_summary': rtk_final.get('filtered_summary'),
+        'raw_evidence_authoritative': True,
+        'rtk': rtk_final,
+    }
     reviewers_summary = [
         {
             'conversation_id': r.get('conversation_id'),
@@ -1194,8 +1818,9 @@ def run_workflow(
         'source_hashes': final_mech.get('source_hashes', {}),
         'source_hashes_unchanged_during_chatgpt_verification_and_review': hashes_unchanged,
         'source_or_tests_written_by_chatgpt': 0,
-        'worker_and_reviewer_model': GEMINI_MODEL,
-        'effort': 'high',
+        **identity,
+        'prompt_chars': last_prompt_chars,
+        'context_optimization': context_opt_summary,
         'effort_verification': last_effort_verification,
         'rework_loops': rework_loops,
         'max_reworks': effective_max_reworks,
@@ -1223,7 +1848,266 @@ def run_workflow(
     return report
 
 
-def main() -> int:
+CHATGPT_REVIEW_PATH = SCRIPT_DIR / 'chatgpt_review.py'
+CHATGPT_REVIEW_MODES = ('off', 'baseline', 'scoped')
+_chatgpt_review_module = None
+
+
+def load_chatgpt_review():
+    global _chatgpt_review_module
+    if _chatgpt_review_module is None:
+        cr_spec = importlib.util.spec_from_file_location('chatgpt_review_helper', CHATGPT_REVIEW_PATH)
+        if cr_spec is None or cr_spec.loader is None:
+            raise ValueError('BLOCKED: chatgpt_review.py helper unavailable')
+        mod = importlib.util.module_from_spec(cr_spec)
+        cr_spec.loader.exec_module(mod)
+        _chatgpt_review_module = mod
+    return _chatgpt_review_module
+
+
+def _chatgpt_review_child_dir(output_dir: Path) -> Path:
+    wf_resolved = Path(output_dir).resolve()
+    return wf_resolved.parent / f'{wf_resolved.name}-chatgpt-review'
+
+
+def _preflight_chatgpt_review_paths(workspace: Path, output_dir: Path) -> Path:
+    if os.path.islink(workspace) or os.path.islink(output_dir):
+        raise ValueError('BLOCKED: workspace and output_dir must not be symlinks')
+    ws_resolved = Path(workspace).resolve()
+    if not ws_resolved.is_dir():
+        raise ValueError('BLOCKED: workspace is not an existing directory')
+    if os.path.lexists(output_dir):
+        raise ValueError('BLOCKED: output_dir must not already exist')
+    wf_resolved = Path(output_dir).resolve()
+    if wf_resolved == ws_resolved or ws_resolved in wf_resolved.parents or wf_resolved in ws_resolved.parents:
+        raise ValueError('BLOCKED: --output-dir must be outside --workspace when --chatgpt-review is enabled')
+    child_dir = _chatgpt_review_child_dir(wf_resolved)
+    if os.path.lexists(child_dir):
+        raise ValueError('BLOCKED: exclusive ChatGPT review output directory must not already exist')
+    if child_dir == ws_resolved or ws_resolved in child_dir.parents or child_dir in ws_resolved.parents:
+        raise ValueError('BLOCKED: ChatGPT review output directory must be outside --workspace')
+    return child_dir
+
+
+def format_final_workflow_summary(final_report: dict[str, object]) -> str:
+    hashes_map = final_report.get('source_hashes') if isinstance(final_report.get('source_hashes'), dict) else {}
+    hashes_str = ', '.join(f'{k}:{str(v)[:12]}' for k, v in sorted(hashes_map.items())) or 'none'
+    codex_u = final_report.get('codex_usage') if isinstance(final_report.get('codex_usage'), dict) else {}
+    prov_u = final_report.get('provider_io_usage') if isinstance(final_report.get('provider_io_usage'), dict) else {}
+    lines = [
+        f"TASK: {final_report.get('id')} ({final_report.get('kind')})",
+        (
+            f"VERDICT: {final_report.get('verdict')} "
+            f"(pipeline={final_report.get('pipeline_verdict')}, "
+            f"chatgpt_review={final_report.get('chatgpt_review_verdict') or 'SKIPPED'}, "
+            f"mode={final_report.get('chatgpt_review_mode')})"
+        ),
+        (
+            f"HASHES: {hashes_str} "
+            f"(unchanged={final_report.get('source_hashes_unchanged_during_chatgpt_verification_and_review')})"
+        ),
+        (
+            f"CODEX_STAGE_TOKENS: in={codex_u.get('input_tokens', 'unknown')} "
+            f"(cached_subset={codex_u.get('cached_input_tokens', 'unknown')}, "
+            f"cache_write={codex_u.get('cache_write_input_tokens', 'unknown')}, "
+            f"uncached={codex_u.get('uncached_input_tokens', 'unknown')}) "
+            f"out={codex_u.get('output_tokens', 'unknown')} "
+            f"(reasoning_subset={codex_u.get('reasoning_output_tokens', 'unknown')}) "
+            f"total={codex_u.get('total_tokens', 'unknown')}"
+        ),
+        (
+            f"PROVIDER_IO_TOKENS: total={prov_u.get('provider_io_total_tokens', 'unknown')} "
+            f"(devin_io={prov_u.get('devin_io_tokens', 'unknown')}, "
+            f"opencode_io={prov_u.get('opencode_io_tokens', 'unknown')}, "
+            f"jev_io={prov_u.get('jev_io_tokens', 'unknown')}, "
+            f"agy_io={prov_u.get('agy_io_tokens', 'unknown')})"
+        ),
+        f"ALL_IN_TOTAL_TOKENS: {final_report.get('all_in_total_tokens', 'unknown')}",
+        f"REASONS: {'; '.join(final_report.get('reasons') or []) or 'none'}",
+        f"RISK: {final_report.get('residual_risk')}",
+    ]
+    return '\n'.join(lines) + '\n'
+
+
+def _finalize_with_chatgpt_review(
+    result: dict[str, object],
+    *,
+    workspace: Path,
+    output_dir: Path,
+    profile: str,
+    child_dir: Path,
+) -> dict[str, object]:
+    pipeline_verdict = str(result.get('verdict') or 'BLOCKED')
+    base_usage_totals = dict(result.get('usage_totals') or {}) if isinstance(result.get('usage_totals'), dict) else {}
+    base_reasons = [str(r) for r in (result.get('reasons') or []) if str(r).strip()]
+
+    if pipeline_verdict != 'PASS':
+        effective_verdict = pipeline_verdict if pipeline_verdict in ('REJECT', 'BLOCKED', 'PENDING_REVIEW') else 'BLOCKED'
+        final_report: dict[str, object] = {
+            'id': result.get('id'),
+            'kind': result.get('kind'),
+            'verdict': effective_verdict,
+            'pipeline_verdict': pipeline_verdict,
+            'chatgpt_review_mode': profile,
+            'chatgpt_review_invoked': False,
+            'chatgpt_review_status': 'SKIPPED_NON_PASS_PIPELINE',
+            'chatgpt_review_verdict': None,
+            'chatgpt_review_confidence': None,
+            'chatgpt_review_output_dir': None,
+            'jev_route': result.get('jev_route'),
+            'rework_loops': result.get('rework_loops'),
+            'unique_tests_passed': result.get('unique_tests_passed'),
+            'context_mode': result.get('context_mode'),
+            'prompt_chars': result.get('prompt_chars'),
+            'context_optimization': result.get('context_optimization'),
+            'source_files': list(result.get('source_files') or []),
+            'source_hashes': dict(result.get('source_hashes') or {}),
+            'source_hashes_unchanged_during_chatgpt_verification_and_review': bool(
+                result.get('source_hashes_unchanged_during_chatgpt_verification_and_review') is True
+            ),
+            'source_hashes_unchanged_during_chatgpt_review': None,
+            'usage_totals': base_usage_totals,
+            'codex_usage': None,
+            'provider_io_usage': None,
+            'all_in_total_tokens': 'unknown',
+            'findings': [],
+            'reasons': base_reasons,
+            'residual_risk': result.get('residual_risk'),
+        }
+        final_report['summary_text'] = format_final_workflow_summary(final_report)
+        final_report = gate.sanitize(final_report)
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        gate.save(Path(output_dir) / 'workflow-final-result.json', final_report)
+        return final_report
+
+    gpt_res: dict[str, object] | None = None
+    helper_error: str | None = None
+    try:
+        cr_mod = load_chatgpt_review()
+        raw_res = cr_mod.run_review(
+            workflow_dir=output_dir,
+            workspace=workspace,
+            output_dir=child_dir,
+            profile=profile,
+        )
+        if isinstance(raw_res, dict):
+            gpt_res = raw_res
+        else:
+            helper_error = 'BLOCKED: ChatGPT review helper returned non-object result'
+    except Exception as exc:
+        helper_error = f'BLOCKED: ChatGPT review helper raised exception: {exc}'
+
+    def _is_pos_int(val: object) -> bool:
+        return type(val) is int and val > 0
+
+    def _is_nonneg_int(val: object) -> bool:
+        return type(val) is int and val >= 0
+
+    codex_usage = gpt_res.get('codex_usage') if isinstance(gpt_res, dict) else None
+    provider_io_usage = gpt_res.get('provider_io_usage') if isinstance(gpt_res, dict) else None
+    all_in_total = gpt_res.get('all_in_total_tokens') if isinstance(gpt_res, dict) else 'unknown'
+
+    valid_usage = (
+        isinstance(codex_usage, dict)
+        and _is_pos_int(codex_usage.get('input_tokens'))
+        and _is_nonneg_int(codex_usage.get('cached_input_tokens'))
+        and _is_pos_int(codex_usage.get('output_tokens'))
+        and _is_pos_int(codex_usage.get('total_tokens'))
+        and codex_usage.get('total_tokens') == codex_usage.get('input_tokens') + codex_usage.get('output_tokens')
+        and isinstance(provider_io_usage, dict)
+        and _is_pos_int(provider_io_usage.get('provider_io_total_tokens'))
+        and _is_pos_int(all_in_total)
+        and all_in_total == codex_usage.get('total_tokens') + provider_io_usage.get('provider_io_total_tokens')
+    )
+    hashes_unchanged_gpt = bool(
+        isinstance(gpt_res, dict)
+        and gpt_res.get('source_hashes_unchanged_during_chatgpt_review') is True
+        and isinstance(gpt_res.get('source_hashes'), dict)
+        and gpt_res.get('source_hashes') == result.get('source_hashes')
+    )
+    gpt_status = str(gpt_res.get('status') or 'BLOCKED') if isinstance(gpt_res, dict) else 'BLOCKED'
+    gpt_verdict = str(gpt_res.get('verdict') or 'BLOCKED') if isinstance(gpt_res, dict) else 'BLOCKED'
+    gpt_findings = [str(f) for f in (gpt_res.get('findings') or []) if str(f).strip()] if isinstance(gpt_res, dict) else []
+    gpt_reasons = [str(r) for r in (gpt_res.get('reasons') or []) if str(r).strip()] if isinstance(gpt_res, dict) else []
+
+    combined_reasons = list(base_reasons)
+    for item in (*gpt_reasons, *gpt_findings):
+        if item not in combined_reasons:
+            combined_reasons.append(item)
+    if helper_error and helper_error not in combined_reasons:
+        combined_reasons.append(helper_error)
+    if not valid_usage:
+        msg = 'BLOCKED: missing or incomplete ChatGPT/provider token usage'
+        if msg not in combined_reasons:
+            combined_reasons.append(msg)
+    if not hashes_unchanged_gpt:
+        msg = 'BLOCKED: source hashes missing or changed during ChatGPT review'
+        if msg not in combined_reasons:
+            combined_reasons.append(msg)
+
+    if (
+        helper_error is None
+        and valid_usage
+        and hashes_unchanged_gpt
+        and gpt_status == 'COMPLETED'
+        and gpt_verdict in ('PASS', 'REJECT')
+    ):
+        effective_verdict = gpt_verdict
+    else:
+        effective_verdict = 'BLOCKED'
+        all_in_total = 'unknown'
+
+    combined_usage_totals = {
+        **base_usage_totals,
+        'codex': codex_usage,
+        'provider_io': provider_io_usage,
+        'all_in_total_tokens': all_in_total,
+    }
+    residual_risk = (
+        str(gpt_res.get('residual_risk'))
+        if isinstance(gpt_res, dict) and isinstance(gpt_res.get('residual_risk'), str) and gpt_res['residual_risk'].strip()
+        else ('; '.join(combined_reasons) if combined_reasons else str(result.get('residual_risk') or 'Bounded scope only'))
+    )
+    final_report = {
+        'id': result.get('id'),
+        'kind': result.get('kind'),
+        'verdict': effective_verdict,
+        'pipeline_verdict': pipeline_verdict,
+        'chatgpt_review_mode': profile,
+        'chatgpt_review_invoked': True,
+        'chatgpt_review_status': gpt_status,
+        'chatgpt_review_verdict': gpt_verdict,
+        'chatgpt_review_confidence': gpt_res.get('confidence') if isinstance(gpt_res, dict) else None,
+        'chatgpt_review_output_dir': str(child_dir),
+        'jev_route': result.get('jev_route'),
+        'rework_loops': result.get('rework_loops'),
+        'unique_tests_passed': result.get('unique_tests_passed'),
+        'context_mode': result.get('context_mode'),
+        'prompt_chars': result.get('prompt_chars'),
+        'context_optimization': result.get('context_optimization'),
+        'source_files': list(result.get('source_files') or []),
+        'source_hashes': dict(result.get('source_hashes') or {}),
+        'source_hashes_unchanged_during_chatgpt_verification_and_review': bool(
+            result.get('source_hashes_unchanged_during_chatgpt_verification_and_review') is True
+            and hashes_unchanged_gpt
+        ),
+        'source_hashes_unchanged_during_chatgpt_review': hashes_unchanged_gpt,
+        'usage_totals': combined_usage_totals,
+        'codex_usage': codex_usage,
+        'provider_io_usage': provider_io_usage,
+        'all_in_total_tokens': all_in_total,
+        'findings': gpt_findings,
+        'reasons': combined_reasons,
+        'residual_risk': residual_risk,
+    }
+    final_report['summary_text'] = format_final_workflow_summary(final_report)
+    final_report = gate.sanitize(final_report)
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    gate.save(Path(output_dir) / 'workflow-final-result.json', final_report)
+    return final_report
+
+
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('packet_file', nargs='?', type=Path, help='Optional path to task packet file')
     parser.add_argument('--packet-file', dest='packet_file_opt', type=Path, help='Path to task packet file')
@@ -1238,6 +2122,12 @@ def main() -> int:
     parser.add_argument('--min-reviewers', type=int, default=None)
     parser.add_argument('--max-reworks', type=int, default=MAX_REWORK_LIMIT)
     parser.add_argument('--worker-timeout', type=int, default=300)
+    parser.add_argument(
+        '--verify-timeout',
+        type=int,
+        default=DEFAULT_VERIFY_TIMEOUT,
+        help='Verification command timeout in seconds (1..1800)',
+    )
     parser.add_argument('--open-question', action='append', default=None)
     parser.add_argument('--quant-contract', type=str, default=None, help='JSON string or path to JSON quant contract')
     parser.add_argument('--require-stronger-reviewer', action='store_true')
@@ -1245,11 +2135,23 @@ def main() -> int:
     parser.add_argument('--authorized-protected', action='store_true')
     parser.add_argument('--triage-only', action='store_true')
     parser.add_argument('--no-resume-worker', action='store_true')
+    parser.add_argument('--context-mode', default=None, help='Prompt context mode: lean (default), compact, or full')
+    parser.add_argument(
+        '--chatgpt-review',
+        choices=CHATGPT_REVIEW_MODES,
+        default='scoped',
+        help='Native ChatGPT final review mode: scoped (default), off, or baseline',
+    )
     parser.add_argument('--print-pack', action='store_true', help='Print compact proof pack text instead of JSON summary')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     packet_path = args.packet_file_opt or args.packet_file
     try:
+        review_child_dir = (
+            _preflight_chatgpt_review_paths(args.workspace, args.output_dir)
+            if args.chatgpt_review != 'off'
+            else None
+        )
         packet_text = packet_path.read_text(encoding='utf-8') if packet_path else None
         quant_contract = None
         if args.quant_contract:
@@ -1269,6 +2171,7 @@ def main() -> int:
             min_reviewers=args.min_reviewers,
             max_reworks=args.max_reworks,
             worker_timeout=args.worker_timeout,
+            verify_timeout=args.verify_timeout,
             open_questions=args.open_question,
             quant_contract=quant_contract,
             require_stronger_reviewer=args.require_stronger_reviewer,
@@ -1276,10 +2179,50 @@ def main() -> int:
             authorized_protected=args.authorized_protected,
             triage_only=args.triage_only,
             resume_worker=not args.no_resume_worker,
+            context_mode=args.context_mode,
         )
     except (OSError, ValueError, TypeError):
         print('Cannot execute workflow or create new output directory; no credentials displayed.', file=sys.stderr)
         return 2
+
+    if args.chatgpt_review != 'off':
+        final_result = _finalize_with_chatgpt_review(
+            result,
+            workspace=args.workspace,
+            output_dir=args.output_dir,
+            profile=args.chatgpt_review,
+            child_dir=review_child_dir or _chatgpt_review_child_dir(args.output_dir),
+        )
+        if args.print_pack:
+            sys.stdout.write(str(final_result['summary_text']))
+        else:
+            compact_final = {
+                k: final_result[k]
+                for k in (
+                    'id',
+                    'verdict',
+                    'pipeline_verdict',
+                    'chatgpt_review_mode',
+                    'chatgpt_review_invoked',
+                    'chatgpt_review_verdict',
+                    'jev_route',
+                    'rework_loops',
+                    'unique_tests_passed',
+                    'context_mode',
+                    'prompt_chars',
+                    'context_optimization',
+                    'source_files',
+                    'source_hashes',
+                    'usage_totals',
+                    'codex_usage',
+                    'provider_io_usage',
+                    'all_in_total_tokens',
+                    'findings',
+                    'reasons',
+                )
+            }
+            print(json.dumps(compact_final, ensure_ascii=False))
+        return {'PASS': 0, 'REJECT': 1, 'BLOCKED': 2, 'PENDING_REVIEW': 3}.get(str(final_result['verdict']), 2)
 
     if args.print_pack:
         sys.stdout.write(result['proof_pack'])
@@ -1292,6 +2235,9 @@ def main() -> int:
                 'jev_route',
                 'rework_loops',
                 'unique_tests_passed',
+                'context_mode',
+                'prompt_chars',
+                'context_optimization',
                 'source_files',
                 'source_hashes',
                 'usage_totals',

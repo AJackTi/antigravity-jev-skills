@@ -1,6 +1,7 @@
 """Offline routing/negative tests. These are not Jev model-accuracy claims."""
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -175,6 +176,57 @@ class RoutingTests(unittest.TestCase):
         answer['resolved_questions']=[{'question':p['open_questions'][0],'resolution':'The declared contract permits int subclasses; no exact-type normalization is required.'}]
         with tempfile.TemporaryDirectory() as tmp,patch.object(gate,'resolve_executable',return_value='offline-cli'),patch.object(gate.subprocess,'run',return_value=output(gate.GEMINI_MODEL)):
             self.assertEqual(gate.run_reviewer(p,None,{},Path(tmp),1)['answer']['verdict'],'PASS')
+    def test_selected_claude_reviewer_args_and_cross_model_mismatch(self):
+        claude='claude-opus-5-5-high';answer={'verdict':'PASS','confidence':95,'findings':[],'resolved_questions':[],'residual_risk':'sample only'}
+        def output(model):
+            return subprocess.CompletedProcess([],0,stdout='\n'.join(json.dumps(x) for x in [
+                {'event':'init','init':{'model':model,'permission_mode':'request-review'}},
+                {'event':'result','result':{'status':'SUCCESS','response':json.dumps(answer),'conversation_id':'fresh'}}]),stderr='')
+        with patch.dict(os.environ,{'AGY_MODEL':claude}):
+            with tempfile.TemporaryDirectory() as tmp,patch.object(gate,'resolve_executable',return_value='offline-cli'),patch.object(gate.subprocess,'run',return_value=output(claude)) as run:
+                info=gate.run_reviewer(packet(),None,{},Path(tmp),1)
+                argv=run.call_args.args[0]
+                self.assertEqual(argv[argv.index('--model')+1],claude);self.assertEqual(argv[argv.index('--effort')+1],'high')
+                self.assertEqual(json.loads((Path(tmp)/'reviewer-1-settings.json').read_text())['toolPermission'],'request-review')
+                self.assertEqual(info['model'],claude)
+            with tempfile.TemporaryDirectory() as tmp,patch.object(gate,'resolve_executable',return_value='offline-cli'),patch.object(gate.subprocess,'run',return_value=output(gate.GEMINI_MODEL)):
+                with self.assertRaises(ValueError):gate.run_reviewer(packet(),None,{},Path(tmp),1)
+            self.assertTrue(any('wrong model' in x for x in gate.check_packet(packet())))
+            p=packet();p['worker']['model']=claude;self.assertEqual(gate.check_packet(p),[])
+        with patch.dict(os.environ,{'AGY_MODEL':''}):  # empty selector -> backwards-compatible default
+            self.assertTrue(any('wrong model' in x for x in gate.check_packet(p)))
+    def test_unsupported_agy_model_blocks_before_any_external_call(self):
+        for bad in ('gpt-6.1-sol','claude-opus-5-5','Gemini-4-Argon-High',' claude-opus-5-5-high'):
+            with self.subTest(model=bad),patch.dict(os.environ,{'AGY_MODEL':bad}),tempfile.TemporaryDirectory() as tmp,\
+                 patch.object(gate,'resolve_executable',return_value='offline-cli'),patch.object(gate.subprocess,'run') as run,patch.object(gate,'call_jev') as jev:
+                result=gate.run(packet(),Path(tmp)/'run')
+                self.assertEqual(result['verdict'],'BLOCKED');self.assertIsNone(result['selected_model'])
+                self.assertTrue(any('unsupported AGY_MODEL' in r for r in result['reasons']))
+                with self.assertRaises(ValueError):gate.run_reviewer(packet(),None,{},Path(tmp),1)
+                run.assert_not_called();jev.assert_not_called()
+        claude='claude-opus-5-5-high'  # explicit helper model cannot bypass the AGY_MODEL selection
+        for env,explicit in (('gpt-6.1-sol',gate.GEMINI_MODEL),('gpt-6.1-sol',claude),(gate.GEMINI_MODEL,'gpt-6.1-sol'),('','gpt-6.1-sol'),(gate.GEMINI_MODEL,claude),(claude,gate.GEMINI_MODEL),(claude,'')):
+            with self.subTest(env=env,explicit=explicit),patch.dict(os.environ,{'AGY_MODEL':env}),tempfile.TemporaryDirectory() as tmp,\
+                 patch.object(gate,'resolve_executable') as resolve,patch.object(gate.subprocess,'run') as run:
+                with self.assertRaises(ValueError):gate.run_reviewer(packet(),None,{},Path(tmp),1,model=explicit)
+                with self.assertRaises(ValueError):gate.check_packet(packet(),explicit)
+                self.assertFalse((Path(tmp)/'reviewer-1-settings.json').exists())
+                resolve.assert_not_called();run.assert_not_called()
+    def test_worker_proof_and_full_handoff_are_verified_and_forwarded(self):
+        def with_proof(**over):
+            p=packet();resp=p['worker']['response']
+            proof={'actual_init_model':gate.GEMINI_MODEL,'permission_mode':'request-review','status':'SUCCESS','exit_code':0,'tool_denied':False,'conversation_id':'w-1'}
+            proof.update(over);p['evidence'].update(worker_proof=proof,full_worker_handoff=resp,source_workspace='/src/ws');return p
+        p=with_proof();self.assertEqual(gate.check_packet(p),[])
+        ev=gate.build_reviewer_payload(p,None,{})['evidence']
+        self.assertEqual((ev['worker_proof']['conversation_id'],ev['full_worker_handoff'],ev['source_workspace']),('w-1',p['worker']['response'],'/src/ws'))
+        for over in ({'permission_mode':None},{'actual_init_model':'claude-opus-5-5-high'},{'tool_denied':None},{'exit_code':1}):
+            with self.subTest(over=over):self.assertTrue(any('worker_proof' in x for x in gate.check_packet(with_proof(**over))))
+        p=with_proof();p['evidence']['full_worker_handoff']='excerpt only'
+        self.assertTrue(any('differs' in x for x in gate.check_packet(p)))
+        p=with_proof();long='x'*(gate.MAX_WORKER_HANDOFF_CHARS+1);p['worker']['response']=long;p['evidence']['full_worker_handoff']=long
+        with tempfile.TemporaryDirectory() as tmp,patch.object(gate,'call_jev') as jev,patch.object(gate,'run_reviewer') as rev:
+            self.assertEqual(gate.run(p,Path(tmp)/'run')['verdict'],'BLOCKED');jev.assert_not_called();rev.assert_not_called()
     def test_public_code_names_and_annotations_do_not_trigger_credential_block(self):
         p=packet()
         p['evidence']['focused_diff']=(
@@ -217,6 +269,98 @@ class RoutingTests(unittest.TestCase):
                 bad_packet=packet()
                 bad_packet['evidence']['summary']=secret_sample
                 self.assertIn('possible credential in packet; redact before delegation',gate.check_packet(bad_packet))
+    def test_kotlin_recovery_public_syntax_and_interpolated_urls_vs_secrets(self):
+        def colon(lhs,name,rhs):return f'{lhs}{name}:{rhs}'
+        def eq(lhs,name,rhs):return f'{lhs}{name}={rhs}'
+        marker='synthetic-secret-marker'
+        ordinary_lines=[
+            colon('data class RecoveryPayload(val ','token',' String, var ') + colon('','refresh_token',' String? = null)'),
+            colon('private val ','secret',' String'),
+            colon('lateinit var ','password',' String'),
+            colon('constructor(','api_key',' String = "")'),
+            colon('fun parseRecovery(','token',' String, ') + colon('','access_token',' String? = null): RecoveryPayload'),
+            'fun verify(\n' + colon('    ','token',' String,\n') + colon('    ','password',' String? = null\n)'),
+            eq('private val FRAGMENT_REGEX = Regex("^#?','token','([A-Za-z0-9_-]+)$")'),
+            eq('private val PARAM_REGEX = Regex("(?:^|[#&])','token','([A-Za-z0-9_-]{16,128})(?:&|$)")'),
+            eq('override fun toString(): String = "RecoveryPayload(','token','[REDACTED])"'),
+            eq('override fun toString(): String = "RecoveryPayload(','token','REDACTED, userId=$userId)"'),
+            eq('val url1 = "https://example.invalid/recover#','token','$rawToken"'),
+            eq('val url2 = "https://example.invalid/recover?flow=android#','token','${session.rawToken}"'),
+            eq('val url3 = "myapp://recover?state=$state&','token','$rawToken&mode=reset"'),
+            eq('val url4 = "${baseUrl}/recover#','token','${rawToken}"'),
+            eq('val url5 = "#','token','$rawToken"'),
+        ]
+        diff_text='\n'.join(
+            f'+{line}' if '\n' not in line else '\n'.join(f'+{part}' for part in line.splitlines())
+            for line in ordinary_lines
+        )
+        for text in (*ordinary_lines, '\n'.join(ordinary_lines), diff_text):
+            self.assertFalse(gate.contains_secret(text),text)
+            self.assertEqual(gate.redact(text),text)
+        p=packet()
+        p['evidence']['focused_diff']=diff_text
+        p['evidence']['summary']=colon('Allow Kotlin (val ','token',' String) and interpolated recovery URL fixtures.')
+        self.assertEqual(gate.check_packet(p),[])
+        negatives=[
+            colon('val ','token',f' String = "{marker}"'),
+            colon('+    var ','password',f' String? = "{marker}"'),
+            colon('data class Auth(val ','api_key',f' String = "{marker}")'),
+            colon('fun auth(','secret',f' String = "{marker}")'),
+            colon('val ','token',f' String =\n    "{marker}"'),
+            colon('val ','token',f' String = "$prefix-{marker}"'),
+            eq('val url = "https://example.invalid/recover#','token',f'${{rawToken}}{marker}"'),
+            eq('+    val url = "https://example.invalid/recover#','token',f'$rawToken-{marker}"'),
+            eq('val url = "https://example.invalid/recover#','token',f'{marker}$rawToken"'),
+            eq('val url = "https://example.invalid/recover#','token',f'${{rawToken}}_{marker}"'),
+            eq('val url = "https://example.invalid/recover#','token',f'{marker}"'),
+            eq('val url = "https://example.invalid/recover?','api_key',f'{marker}"'),
+            eq('// ','token',marker),
+            colon('/* ','password',f' {marker} */'),
+            colon('{"','refresh_token',f'": "{marker}"}}'),
+            eq('','token',f'\\"{marker}\\"'),
+            colon('','secret',f'\n {marker}'),
+            eq('Regex("^#?','token',f'([A-Za-z0-9_-]+){marker}$")'),
+            eq('override fun toString(): String = "RecoveryPayload(','token',f'REDACTED-{marker})"'),
+            eq('override fun toString(): String = "RecoveryPayload(','token',f'${{{marker}}})"'),
+        ]
+        for bad in negatives:
+            with self.subTest(bad=bad):
+                self.assertTrue(gate.contains_secret(bad))
+                redacted=gate.redact(bad)
+                self.assertIn('<redacted>',redacted)
+                self.assertNotIn(marker,redacted)
+                bad_packet=packet()
+                bad_packet['evidence']['focused_diff']=bad
+                self.assertIn('possible credential in packet; redact before delegation',gate.check_packet(bad_packet))
+        test_src=Path(__file__).read_text().split('def test_kotlin_recovery_public_syntax_and_interpolated_urls_vs_secrets')[1]
+        self.assertIsNone(gate.SECRET_ASSIGNMENT.search(test_src))
+        self.assertIsNone(gate.KEY_VALUE.search(test_src))
+    def test_allowed_kotlin_and_url_interpolation_do_not_mask_adjacent_credentials(self):
+        def colon(lhs,name,rhs):return f'{lhs}{name}:{rhs}'
+        def eq(lhs,name,rhs):return f'{lhs}{name}={rhs}'
+        marker='synthetic-adjacent-secret'
+        kt_ok=colon('val ','token',' String')
+        url_ok=eq('val u = "https://example.invalid/recover#','token','$rawToken"')
+        cred_kt=colon('val ','password',f' String = "{marker}"')
+        cred_url=eq('val leak = "https://example.invalid/recover#','api_key',f'{marker}"')
+        same_url_after=eq('val u = "https://example.invalid/recover#','token','$rawToken&')+eq('','api_key',f'{marker}"')
+        same_url_before=eq('val u = "https://example.invalid/recover?','api_key',f'{marker}&')+eq('','token','$rawToken"')
+        for sample in (
+            f'{kt_ok}\n{cred_kt}',
+            f'{cred_kt}\n{kt_ok}',
+            f'{url_ok}\n{cred_url}',
+            f'{cred_url}\n{url_ok}',
+            same_url_after,
+            same_url_before,
+        ):
+            with self.subTest(sample=sample):
+                self.assertTrue(gate.contains_secret(sample))
+                redacted=gate.redact(sample)
+                self.assertIn('<redacted>',redacted)
+                self.assertNotIn(marker,redacted)
+                bad_packet=packet()
+                bad_packet['evidence']['focused_diff']=sample
+                self.assertIn('possible credential in packet; redact before delegation',gate.check_packet(bad_packet))
     def test_jev_state_triage_omits_raw_diff_but_links_hashes_and_reviewer_keeps_diff(self):
         p=packet('quant')
         p['evidence']['focused_diff']='- old_line\n+ new_line_only_for_reviewer\n'
@@ -231,6 +375,91 @@ class RoutingTests(unittest.TestCase):
         self.assertIn('new_line_only_for_reviewer',rev_payload['evidence']['focused_diff'])
         self.assertNotIn('worker',rev_payload)
         self.assertTrue(all('output' not in c for c in rev_payload['checks']))
+    def test_kotlin_compose_on_value_change_implicit_it_vs_secrets(self):
+        def colon(lhs,name,rhs):return f'{lhs}{name}:{rhs}'
+        def eq(lhs,name,rhs):return f'{lhs}{name}={rhs}'
+        marker='synthetic-callback-secret'
+        positives=[
+            eq('onValueChange = { ','token',' it }'),
+            eq('    onValueChange = { ','password',' it },'),
+            eq('OutlinedTextField(value = raw, onValueChange = { ','secret',' it })'),
+            eq('OutlinedTextField(onValueChange={','api_key','it})'),
+        ]
+        diff_text='\n'.join(f'+{line}' for line in positives)
+        for text in (*positives,'\n'.join(positives),diff_text):
+            self.assertFalse(gate.contains_secret(text),text)
+            self.assertEqual(gate.redact(text),text)
+        p=packet()
+        p['evidence']['focused_diff']=diff_text
+        p['evidence']['summary']=eq('Allow Compose (onValueChange = { ','token',' it }) callback.')
+        self.assertEqual(gate.check_packet(p),[])
+        ok_cb=positives[0]
+        after_samples=[
+            f'{ok_cb}\n'+eq('','password',f' "{marker}"'),
+            f'+{ok_cb}\n'+colon('+val ','secret',f' String = "{marker}"'),
+            eq('OutlinedTextField(onValueChange = { ','token',' it }, ')+eq('','api_key',f' "{marker}")'),
+        ]
+        negatives=[
+            eq('onValueChange = { ','token',f' "{marker}" }}'),
+            eq('+    onValueChange = { ','password',f' {marker} }}'),
+            eq('onValueChange = { ','token',f' "$it-{marker}" }}'),
+            eq('onValueChange = { ','token',f' "${{it}}{marker}" }}'),
+            eq('onValueChange = { ','token',f' it + "{marker}" }}'),
+            eq('onValueChange = { ','token',f' it + {marker} }}'),
+            eq('onValueChange = { v -> ','token',' v }'),
+            eq('onValueChange = { it -> ','token',' it }'),
+            eq('onValueChange = { ','token',f' it; log("{marker}") }}'),
+            eq('onValueChange = { log(it); ','token',' it }'),
+            eq('onValueChange = { ','token',' it.trim() }'),
+            eq('onValueChange = {\n    ','token',' it\n}'),
+            eq('onValueChange = { ','token','\n    it }'),
+            eq('// onValueChange = { ','token',f' {marker} }}'),
+            colon('{"','token',f'": "{marker}"}}'),
+            colon('{"onValueChange": {"','token','": "it"}}'),
+            eq('','token',' it'),
+            eq('    ','password',' it'),
+            eq('onClick = { ','token',' it }'),
+            eq('onValueChange = { state.','token',' it }'),
+            *after_samples,
+        ]
+        for bad in negatives:
+            with self.subTest(bad=bad):
+                self.assertTrue(gate.contains_secret(bad),bad)
+                redacted=gate.redact(bad)
+                self.assertIn('<redacted>',redacted)
+                self.assertNotIn(marker,redacted)
+                bad_packet=packet()
+                bad_packet['evidence']['focused_diff']=bad
+                self.assertIn('possible credential in packet; redact before delegation',gate.check_packet(bad_packet))
+        self.assertTrue(gate.redact(after_samples[0]).startswith(ok_cb+'\n<redacted>'))
+    def test_devin_worker_proof_validated_separately_from_agy(self):
+        def devin_packet(kind='task'):
+            p=packet(kind);resp='Devin handoff'
+            p['worker']={'provider':'devin','model':gate.DEVIN_MODEL,'exit_code':0,'proof_status':'VERIFIED','response':resp,'tool_denied':False,'tool_calls':0}
+            p['evidence'].update(full_worker_handoff=resp,worker_proof={'provider':'devin','actual_generation_model':gate.DEVIN_MODEL,'agent_model_name':gate.DEVIN_MODEL_NAME,
+                'permission_mode':'Normal','schema_version':gate.DEVIN_ATIF_SCHEMA,'exit_code':0,'tool_calls':0,'tool_denied':False,'stdout_matches_export':True,'session_id':'s-1'})
+            return p
+        self.assertEqual(gate.check_packet(devin_packet()),[])
+        p=devin_packet();p['evidence']['worker_proof']['stdout_normalization']=gate.DEVIN_STDOUT_NORMALIZATION;self.assertEqual(gate.check_packet(p),[])
+        p['evidence']['worker_proof']['stdout_normalization']='stripped arbitrary ANSI';self.assertTrue(gate.check_packet(p))
+        self.assertEqual(gate.decide(devin_packet(),gate.parse_assessment(response()))['reviewers_required'],1)
+        self.assertEqual(gate.decide(devin_packet('quant'),gate.parse_assessment(response()))['reviewers_required'],2)
+        for mutate in (lambda p:p['worker'].update(effort='high'),lambda p:p['worker'].update(status='SUCCESS'),
+                       lambda p:p['worker'].update(permission_mode='request-review'),lambda p:p['worker'].update(model=gate.GEMINI_MODEL),
+                       lambda p:p['worker'].update(tool_calls=1),lambda p:p['worker'].update(proof_status='UNVERIFIED'),
+                       lambda p:p['evidence'].pop('worker_proof'),lambda p:p['evidence']['worker_proof'].update(actual_init_model=gate.DEVIN_MODEL),
+                       lambda p:p['evidence']['worker_proof'].update(stdout_matches_export=False),lambda p:p['evidence']['worker_proof'].update(permission_mode='request-review'),
+                       lambda p:p['evidence']['worker_proof'].update(actual_generation_model='swe-2-high'),lambda p:p['worker'].update(provider='opencode')):
+            p=devin_packet();mutate(p)
+            with self.subTest(p=p['worker']):self.assertTrue(gate.check_packet(p))
+        p=packet();p['worker']['model']=gate.DEVIN_MODEL  # Devin model never passes the agy path
+        self.assertTrue(any('wrong model' in x for x in gate.check_packet(p)))
+    def test_reviewer_print_timeout_with_success_status_rejected(self):
+        answer={'verdict':'PASS','confidence':95,'findings':[],'resolved_questions':[],'residual_risk':'sample'}
+        events=[{'event':'init','init':{'model':gate.GEMINI_MODEL,'permission_mode':'request-review'}},{'event':'result','result':{'status':'SUCCESS','finished_reason':'print_timeout','response':json.dumps(answer),'conversation_id':'fresh'}}]
+        raw=subprocess.CompletedProcess([],0,stdout='\n'.join(map(json.dumps,events)),stderr='')
+        with patch.dict(os.environ,{'AGY_MODEL':''}),tempfile.TemporaryDirectory() as tmp,patch.object(gate,'resolve_executable',return_value='offline-cli'),patch.object(gate.subprocess,'run',return_value=raw):
+            with self.assertRaises(ValueError):gate.run_reviewer(packet(),None,{},Path(tmp),1)
 
 
 if __name__=='__main__':unittest.main()
