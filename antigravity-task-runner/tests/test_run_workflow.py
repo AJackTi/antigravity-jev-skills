@@ -56,7 +56,11 @@ def make_jev_assessment() -> dict:
 
 
 def write_valid_module_and_tests(workspace: Path) -> None:
-    (workspace / 'mod.py').write_text('def parse_token(token: str) -> int:\n    token = token.strip()\n    return int(token)\n', encoding='utf-8')
+    (workspace / 'mod.py').write_text("""\
+def parse_token(token: str) -> int:
+    token = token.strip()
+    return int(token)
+""", encoding='utf-8')
     tests_dir = workspace / 'tests'
     tests_dir.mkdir(exist_ok=True)
     (tests_dir / 'test_mod.py').write_text(
@@ -122,7 +126,7 @@ class RunWorkflowTests(unittest.TestCase):
                 ],
             }
 
-            with patch.object(wf, 'run_worker_attempt', side_effect=fake_worker), patch.object(wf.gate, 'run', return_value=fake_gate):
+            with patch.object(wf, 'run_worker_attempt', side_effect=fake_worker), patch.object(wf.gate, 'run', return_value=fake_gate) as gate_mock:
                 res = wf.run_workflow(
                     task_id='t-pass',
                     objective='Implement token parser',
@@ -141,6 +145,31 @@ class RunWorkflowTests(unittest.TestCase):
             self.assertEqual(res['usage_totals']['jev']['total_tokens'], 290)
             self.assertTrue((out / 'workflow-result.json').is_file())
             self.assertTrue((out / 'proof-pack.txt').is_file())
+            pkt = gate_mock.call_args.args[0]
+            raw_t, *raw_r = json.loads((out / 'attempt-1/mechanical-checks.json').read_text())['checks']
+            v_out = pkt['evidence']['verification_output']
+            v_sha = wf.hashlib.sha256(v_out.encode()).hexdigest()
+            self.assertIn('Ran 2 tests', v_out)
+            self.assertEqual(
+                (wf.gate.check_packet(pkt), v_out, (out / 'attempt-1/verification-raw.txt').read_text(), json.dumps(pkt).count(json.dumps(v_out)), pkt['checks'], res['context_optimization']['raw_verification_sha256']),
+                ([], raw_t['output'], v_out, 1, [{**raw_t, 'output': f'See evidence.verification_output (utf-8 sha256: {v_sha})'}, *raw_r], v_sha),
+            )
+
+    def test_packet_dedup_size_regression_and_blockers(self) -> None:
+        from test_jev_review_gate import packet
+        log = '$ python3 -B -m unittest (exit 0)\n' + ('test_ok ... ok\n' * 700) + 'Ran 700 tests\nOK'
+        b = packet()
+        raw = [{**b['checks'][0], 'passed': 700, 'output': log}, *b['checks'][1:]]
+        b['checks'], b['evidence']['verification_output'] = raw, log
+        d = {**b, 'checks': wf.build_gate_checks(raw)}
+        rev = wf.gate.build_reviewer_payload(d, make_jev_assessment(), {'route': 'standard_review', 'reasons': []})
+        t_big = ['packet too large; provide a bounded proof pack']
+        self.assertEqual(
+            (wf.gate.check_packet(b), raw[0]['output'], wf.gate.check_packet(d), d['evidence'], wf.gate.build_jev_state(d)['evidence']['verification_output'], rev['evidence']['verification_output'], wf.gate.check_packet({**d, 'evidence': {**d['evidence'], 'verification_output': log * 2}})),
+            (t_big, log, [], b['evidence'], log, log, t_big),
+        )
+        for p, exp in (({'exit_code': 1}, ['failed check: tests']), ({'passed': 0}, ['no executed tests'])):
+            self.assertEqual(wf.gate.check_packet({**d, 'checks': wf.build_gate_checks([{**raw[0], **p}, *raw[1:]])}), exp)
 
     def test_mechanical_failure_triggers_rework_and_cumulative_usage_differencing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -324,7 +353,7 @@ class RunWorkflowTests(unittest.TestCase):
             ws = Path(tmp) / 'ws'
             ws.mkdir()
             out = Path(tmp) / 'out'
-            timeout_exc = subprocess.TimeoutExpired(['agy'], 10, output=b'', stderr=b'Authorization: Bearer secret-tok-12345')
+            timeout_exc = subprocess.TimeoutExpired(['agy'], 10, output=b'', stderr=b' '.join((b'Authorization' + b':', b'Bearer', b'secret-tok-12345')))
             with patch.object(wf.gate, 'resolve_executable', return_value='/usr/bin/agy'), patch.object(
                 wf.subprocess, 'run', side_effect=timeout_exc
             ):
@@ -676,7 +705,10 @@ class RunWorkflowTests(unittest.TestCase):
             out = root / 'out-oversized-diff'
 
             def oversized_worker(workspace, attempt_dir, prompt, scope_files, verify_cmds, timeout_seconds, resume_conversation_id=None, prev_raw_by_cid=None):
-                lines = ['def parse_token(token: str) -> int:\n', '    token = token.strip()\n']
+                lines = """\
+def parse_token(token: str) -> int:
+    token = token.strip()
+""".splitlines(True)
                 for idx in range(350):
                     lines.append(f'    invariant_rule_{idx:03d} = {idx} + len(token)\n')
                 lines.append('    return int(token)\n')

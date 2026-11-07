@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Headless workflow runner: worker (agy AGY_MODEL, WORKFLOW_WORKER=devin tool-free swe-1-6-slow, or WORKFLOW_WORKER=opencode tool-free OPENCODE_MODEL) -> mechanical checks -> Jev triage -> fresh AGY_MODEL review(s) -> bounded rework."""
+"""Headless workflow runner: worker (agy AGY_MODEL, WORKFLOW_WORKER=devin tool-free swe-1-6-slow, WORKFLOW_WORKER=opencode tool-free OPENCODE_MODEL, or WORKFLOW_WORKER=zai|openrouter tool-free direct HTTPS API) -> mechanical checks -> Jev triage -> fresh AGY_MODEL review(s) -> bounded rework."""
 from __future__ import annotations
 
 import argparse
@@ -29,6 +29,10 @@ OPENCODE_PATH = SCRIPT_DIR / 'opencode_worker.py'
 _opencode_spec = importlib.util.spec_from_file_location('opencode_worker', OPENCODE_PATH)
 opencode = importlib.util.module_from_spec(_opencode_spec)
 _opencode_spec.loader.exec_module(opencode)
+FREE_API_PATH = SCRIPT_DIR / 'free_api_worker.py'
+_free_api_spec = importlib.util.spec_from_file_location('free_api_worker', FREE_API_PATH)
+free_api = importlib.util.module_from_spec(_free_api_spec)
+_free_api_spec.loader.exec_module(free_api)
 
 GEMINI_MODEL = gate.GEMINI_MODEL  # compatibility alias for the default AGY_MODEL
 DEVIN_MODEL = gate.DEVIN_MODEL
@@ -550,6 +554,12 @@ def run_mechanical_checks(
 
     if test_exit == 0 and total_passed <= 0:
         test_exit = 1
+        test_outputs.append(
+            'Diagnostic: no recognized executed-test summary found '
+            '(exit 0 with 0 executed tests counted; could be unsupported custom output format or truly no tests). '
+            'Run real supported tests (unittest, pytest, Go, or Node), including '
+            '`python3 -B -m unittest discover -s tests -v` for static integrity assertions.'
+        )
     tests_check = {
         'kind': 'tests',
         'command': ' && '.join(cmds),
@@ -886,6 +896,15 @@ def summarize_worker_response(response_text: str, max_chars: int = 600) -> str:
     return compact[: max_chars - 15].rstrip() + '...'
 
 
+def build_gate_checks(checks: list[dict[str, object]]) -> list[dict[str, object]]:
+    return [
+        {**c, 'output': f"See evidence.verification_output (utf-8 sha256: {hashlib.sha256(str(c.get('output') or '').encode('utf-8')).hexdigest()})"}
+        if c.get('kind') == 'tests'
+        else dict(c)
+        for c in checks
+    ]
+
+
 def aggregate_external_usage(external_steps: list[dict[str, object]]) -> dict[str, object]:
     gemini_in = 0
     gemini_out = 0
@@ -902,18 +921,40 @@ def aggregate_external_usage(external_steps: list[dict[str, object]]) -> dict[st
     opencode_sessions = 0
     opencode_steps_seen = 0
     opencode_unverified = False
+    api_buckets = {
+        'zai': {
+            'prompt_tokens': 0,
+            'completion_tokens': 0,
+            'total_tokens': 0,
+            'cached_tokens': 0,
+            'reasoning_tokens': 0,
+            'total_steps': 0,
+            'sessions': 0,
+            'steps_seen': 0,
+            'unverified': False,
+        },
+        'openrouter': {
+            'prompt_tokens': 0,
+            'completion_tokens': 0,
+            'total_tokens': 0,
+            'cached_tokens': 0,
+            'reasoning_tokens': 0,
+            'total_steps': 0,
+            'sessions': 0,
+            'steps_seen': 0,
+            'unverified': False,
+        },
+    }
 
     for step in external_steps:
         usage = step.get('usage') if isinstance(step.get('usage'), dict) else {}
         updates += int(step.get('usage_updates_observed', 1) or 1)
         if step.get('provider') == 'devin':
-            # Provider-specific ATIF counters; never pooled into the legacy agy/'gemini' bucket.
             if usage and all(type(usage.get(k)) is int and usage[k] >= 0 for k in devin.FINAL_METRIC_KEYS):
                 devin_sessions += 1
                 for k in devin.FINAL_METRIC_KEYS:
                     devin_totals[k] += usage[k]
         elif step.get('provider') == 'opencode':
-            # Provider-specific OpenCode counters; never pooled into 'gemini' or 'devin'.
             opencode_steps_seen += 1
             if (
                 usage
@@ -935,6 +976,35 @@ def aggregate_external_usage(external_steps: list[dict[str, object]]) -> dict[st
                     opencode_totals[k] += usage[k]
             else:
                 opencode_unverified = True
+        elif step.get('provider') in ('zai', 'openrouter'):
+            bucket = api_buckets[step.get('provider')]
+            bucket['steps_seen'] += 1
+            required_keys = ['prompt_tokens', 'completion_tokens', 'total_tokens', 'cached_tokens', 'reasoning_tokens', 'total_steps']
+            if usage and all(k in usage for k in required_keys):
+                values = [usage[k] for k in required_keys]
+                if all(type(v) is int and v >= 0 for v in values):
+                    prompt, completion, total, cached, reasoning, total_steps = values
+                    if (
+                        prompt > 0
+                        and completion > 0
+                        and total_steps > 0
+                        and total == prompt + completion
+                        and cached <= prompt
+                        and reasoning <= completion
+                    ):
+                        bucket['sessions'] += 1
+                        bucket['prompt_tokens'] += prompt
+                        bucket['completion_tokens'] += completion
+                        bucket['total_tokens'] += total
+                        bucket['cached_tokens'] += cached
+                        bucket['reasoning_tokens'] += reasoning
+                        bucket['total_steps'] += total_steps
+                    else:
+                        bucket['unverified'] = True
+                else:
+                    bucket['unverified'] = True
+            else:
+                bucket['unverified'] = True
         elif step.get('model') == JEV_MODEL or step.get('role') == 'jev':
             i = int(usage.get('input_tokens', 0) or 0)
             o = int(usage.get('output_tokens', 0) or 0)
@@ -958,6 +1028,30 @@ def aggregate_external_usage(external_steps: list[dict[str, object]]) -> dict[st
         {k: 'unknown' for k in opencode.OPENCODE_METRIC_KEYS}
         if (opencode_steps_seen > 0 and (opencode_unverified or opencode_sessions == 0))
         else dict(opencode_totals)
+    )
+    zai_summary = (
+        {k: 'unknown' for k in api_buckets['zai'] if k not in ('sessions', 'steps_seen', 'unverified')}
+        if (api_buckets['zai']['steps_seen'] > 0 and (api_buckets['zai']['unverified'] or api_buckets['zai']['sessions'] == 0))
+        else {k: api_buckets['zai'][k] for k in ('prompt_tokens', 'completion_tokens', 'total_tokens', 'cached_tokens', 'reasoning_tokens', 'total_steps')}
+    )
+    openrouter_summary = (
+        {k: 'unknown' for k in api_buckets['openrouter'] if k not in ('sessions', 'steps_seen', 'unverified')}
+        if (api_buckets['openrouter']['steps_seen'] > 0 and (api_buckets['openrouter']['unverified'] or api_buckets['openrouter']['sessions'] == 0))
+        else {k: api_buckets['openrouter'][k] for k in ('prompt_tokens', 'completion_tokens', 'total_tokens', 'cached_tokens', 'reasoning_tokens', 'total_steps')}
+    )
+    combined_api_total = 0
+    if isinstance(zai_summary.get('total_tokens'), int):
+        combined_api_total += zai_summary['total_tokens']
+    if isinstance(openrouter_summary.get('total_tokens'), int):
+        combined_api_total += openrouter_summary['total_tokens']
+    combined_api_total_known = not any(
+        bucket['steps_seen'] > 0 and (bucket['unverified'] or bucket['sessions'] == 0)
+        for bucket in api_buckets.values()
+    )
+    combined_non_cache_total = (
+        gemini_total + jev_total + combined_api_total
+        if combined_api_total_known
+        else 'unknown'
     )
     return {
         'gemini': {
@@ -984,8 +1078,16 @@ def aggregate_external_usage(external_steps: list[dict[str, object]]) -> dict[st
             **opencode_summary,
             'basis': opencode.OPENCODE_USAGE_BASIS,
         },
-        'legacy_key_note': "'gemini' is the legacy key for agy usage of the selected AGY_MODEL only; Devin and OpenCode usage appear only under 'devin' and 'opencode'",
-        'combined_non_cache_total_tokens': gemini_total + jev_total,
+        'zai': {
+            'sessions_with_verified_usage': api_buckets['zai']['sessions'],
+            **zai_summary,
+        },
+        'openrouter': {
+            'sessions_with_verified_usage': api_buckets['openrouter']['sessions'],
+            **openrouter_summary,
+        },
+        'legacy_key_note': "'gemini' is the legacy key for agy usage of the selected AGY_MODEL only; Devin, OpenCode, zai, and openrouter usage appear only under their respective provider keys. API cached tokens are a subset of prompt_tokens and are not double-counted in combined_non_cache_total_tokens.",
+        'combined_non_cache_total_tokens': combined_non_cache_total,
         'usage_updates_observed': updates,
     }
 
@@ -1108,11 +1210,21 @@ def run_workflow(
         preflight_blockers.append(str(exc))
     is_devin = worker_kind == 'devin'
     is_opencode = worker_kind == 'opencode'
+    is_free_api = worker_kind in ('zai', 'openrouter')
     opencode_full_model: str | None = None
+    free_api_full_model: str | None = None
     if is_opencode:
         try:
             opencode_full_model, _, _ = opencode.resolve_opencode_model(opencode_model)
         except (ValueError, opencode.OpenCodeBlocked) as exc:
+            preflight_blockers.append(str(exc))
+    if is_free_api:
+        try:
+            if worker_kind == 'zai':
+                free_api_full_model = free_api.resolve_zai_model()
+            elif worker_kind == 'openrouter':
+                free_api_full_model = free_api.resolve_openrouter_model()[0]
+        except (ValueError, free_api.FreeApiBlocked) as exc:
             preflight_blockers.append(str(exc))
     try:
         agy_model = gate.selected_model()  # always validated: selects fresh AGY reviewers (and the agy worker)
@@ -1124,11 +1236,11 @@ def run_workflow(
     except ValueError as exc:  # unsupported WORKFLOW_CONTEXT: no worker/Jev/reviewer call
         effective_context_mode = None
         preflight_blockers.append(str(exc))
-    is_external_non_agy = is_devin or is_opencode
+    is_external_non_agy = is_devin or is_opencode or is_free_api
     identity = {
         'worker_provider': worker_kind,
         'worker_model': (
-            DEVIN_MODEL if is_devin else (opencode_full_model if is_opencode else agy_model)
+            DEVIN_MODEL if is_devin else (opencode_full_model if is_opencode else (free_api_full_model if is_free_api else agy_model))
         ) if worker_kind else None,
         'worker_effort': None if is_external_non_agy else 'high',
         'reviewer_provider': 'agy',
@@ -1262,7 +1374,26 @@ def run_workflow(
         attempt_num = attempt_idx + 1
         attempt_dir = output_dir / f'attempt-{attempt_num}'
         attempt_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-        if is_devin:
+        if is_free_api:
+            step_label = f'free_api_{worker_kind}_{attempt_num}'
+            worker_res = free_api.run_free_api_attempt(
+                provider=worker_kind,
+                model=free_api_full_model,
+                workspace=workspace,
+                attempt_dir=attempt_dir,
+                contract=full_contract,
+                scope_files=effective_scope,
+                verify_cmds=effective_verify,
+                timeout_seconds=worker_timeout,
+                feedback=devin.build_feedback(pending_defects) if attempt_idx > 0 else None,
+                open_questions=questions,
+                attempt=attempt_num,
+                max_attempts=effective_max_reworks + 1,
+                context_mode=effective_context_mode
+            )
+            attempt_context_mode = worker_res.get('context_mode', effective_context_mode)
+            attempt_prompt_chars = worker_res.get('prompt_chars', 0)
+        elif is_devin:
             # Every Devin attempt is a fresh session: original contract + current scoped source + concise feedback.
             step_label = (
                 f'Devin worker generation ({DEVIN_MODEL})' if attempt_idx == 0
@@ -1341,7 +1472,28 @@ def run_workflow(
         if isinstance(attempt_prompt_chars, int):
             last_prompt_chars = attempt_prompt_chars
 
-        if is_devin:
+        if is_free_api:
+            external_steps.append({
+                'step': step_label,
+                'role': 'worker',
+                'provider': worker_kind,
+                'attempt': attempt_num,
+                'requested_model': free_api_full_model,
+                'model': worker_res.get('model'),
+                'effort': None,
+                'context_mode': last_context_mode,
+                'prompt_chars': last_prompt_chars,
+                'conversation_id': worker_res.get('request_id'),
+                'usage': worker_res.get('usage', {}),
+                'usage_basis': worker_res.get('usage_basis', ''),
+                'usage_updates_observed': worker_res.get('usage_updates_observed', 0),
+                'exit_code': worker_res.get('exit_code'),
+                'duration_seconds': worker_res.get('duration_seconds', 0.0),
+                'status': 'BLOCKED' if worker_res.get('blocked', False) else 'VERIFIED',
+                'files_applied': worker_res.get('files_written', []),
+                'reason': worker_res.get('reason')
+            })
+        elif is_devin:
             external_steps.append(
                 {
                     'step': step_label,
@@ -1427,7 +1579,7 @@ def run_workflow(
             )
             break
 
-        worker_cid = str(worker_res['session_id'] if (is_devin or is_opencode) else worker_res['conversation_id'])
+        worker_cid = str(worker_res['request_id'] if is_free_api else (worker_res['session_id'] if (is_devin or is_opencode) else worker_res['conversation_id']))
         final_summary = summarize_worker_response(str(worker_res.get('response') or ''))
 
         # Run coordinator mechanical verification
@@ -1513,7 +1665,21 @@ def run_workflow(
 
         # Mechanical checks passed -> build packet and invoke shared Jev -> fresh AGY_MODEL review gate
         pre_review_hashes = dict(mech['source_hashes'])
-        if is_devin:
+        if is_free_api:
+            packet_worker = {
+                'provider': worker_res['provider'],
+                'model': worker_res['model'],
+                'exit_code': worker_res['exit_code'],
+                'proof_status': worker_res['proof_status'],
+                'request_id': worker_res['request_id'],
+                'response': worker_res['response'],
+                'tool_calls': worker_res.get('tool_calls'),
+                'tool_denied': worker_res.get('tool_denied'),
+                'provider_id': worker_res.get('provider_id'),
+                'model_id': worker_res.get('model_id')
+            }
+            worker_proof = dict(worker_res['worker_proof'])
+        elif is_devin:
             packet_worker: dict[str, object] = {
                 'provider': 'devin',
                 'model': worker_res['model'],
@@ -1611,7 +1777,7 @@ def run_workflow(
             'kind': kind,
             'objective': full_contract,
             'worker': packet_worker,
-            'checks': mech['checks'],
+            'checks': build_gate_checks(mech['checks']),
             'evidence': {
                 'focused_diff': mech['focused_diff'],
                 'verification_output': next(c['output'] for c in mech['checks'] if c['kind'] == 'tests'),

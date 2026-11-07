@@ -1,113 +1,59 @@
-# Installation & Operations Guide
+# Installation
 
-## 1. Prerequisites & CLI Authentication
+## 1. Dependencies
 
-- **OS & Python:** macOS or Linux, **Python 3.10+**.
-- **Antigravity CLI (`agy`):** Install and authenticate the official CLI separately: https://antigravity.google/docs/getting-started/
-- **Verify exact model pin:** Confirm `agy models` exposes `gemini-4-argon-high` (workers and fresh reviewers hard-pin `--model gemini-4-argon-high --effort high` with no fallback):
-  ```bash
-  agy --help
-  agy models
-  ```
-- **TypeSafe AI:** Account and API key per https://docs.typesafe.ai.
-- **Codex:** Reads global conventions at `~/.codex/AGENTS.md`.
+Use macOS/Linux and Python 3.10+. Install/authenticate `agy` and Codex CLI separately. AGY must expose `gemini-4-argon-high` or `claude-opus-5-5-high` with High effort. Default scoped final review uses existing ChatGPT authentication and `gpt-6.1-sol`. Its catalog requires Superpowers 7.0.1; this bundle does not install that plugin or the engineering guides referenced by the global policy.
 
-## 2. Obtain Source & Verify Archive
+Check native authentication/availability, including `agy --print /usage`; availability is not a future quota guarantee.
 
-- **Clone repository:**
-  ```bash
-  git clone https://github.com/AJackTi/antigravity-jev-skills.git antigravity-jev-skills
-  cd antigravity-jev-skills
-  ```
-- **Or download ZIP + `.sha256` from the latest Release (`https://github.com/AJackTi/antigravity-jev-skills/releases/latest`), verify SHA-256, and unzip:**
-  ```bash
-  shasum -a 256 -c antigravity-jev-skills-*.zip.sha256
-  unzip antigravity-jev-skills-*.zip
-  cd antigravity-jev-skills
-  ```
+## 2. Verify and register
 
-## 3. Verify Manifest & Register Symlinks
-
-1. **Verify file hashes against `manifest.json`** (offline):
-   ```bash
-   python3 -B install.py
-   ```
-2. **Register user-level symlinks** (skills in `~/.agents/skills/`; `jev` and `jev-pool` in `~/.local/bin/`):
-   ```bash
-   python3 -B install.py --install
-   ```
-- **Symlink persistence:** Creates symlinks only; does not copy skills or auto-activate `global-config/AGENTS.md`. Keep the extracted/cloned folder in place.
-- **Collision preservation:** Existing regular files, real directories, and unrelated config are preserved. `--replace-links` replaces user-owned symlinks only and never overwrites real directories or files.
-- **Isolated trial:** Test in an isolated root before modifying an active global skills setup:
-  ```bash
-  python3 -B install.py --install --target-root /tmp/agy-jev-trial
-  ```
-
-## 4. Configure `PATH`
-
-Add `~/.local/bin` (or `<target-root>/.local/bin`) to `PATH` in `~/.zshrc` or `~/.bashrc` and your current shell, then check the CLIs offline:
+For a downloaded bundle:
 
 ```bash
-export PATH="$HOME/.local/bin:$PATH"
-jev --help
-jev-pool --help
+shasum -a 256 -c antigravity-jev-skills-20261107.zip.sha256
+unzip antigravity-jev-skills-20261107.zip
+cd antigravity-jev-skills
+python3 -B install.py
+python3 -B install.py --install
 ```
 
-## 5. Review & Merge `global-config/AGENTS.md`
+A Git clone starts at `python3 -B install.py`. For an isolated trial use `--install --target-root /tmp/agy-jev-trial`. The installer registers three skill symlinks and `jev`/`jev-pool` launchers; it preserves existing real files/directories. `--replace-links` replaces owned symlinks only. Keep the source folder in place, add `~/.local/bin` to PATH, and check `jev --help` and `jev-pool --help`.
 
-- Manually review and merge `global-config/AGENTS.md` into `~/.codex/AGENTS.md`, preserving existing rules. Do not blindly overwrite `~/.codex/AGENTS.md`.
-- **Reopen your Codex chat** to refresh cached skills and apply routing rules.
-- `AGENTS.md` is an instructional convention, not runtime enforcement; repo or higher-priority instructions take precedence and stop at `BLOCKED` on conflict.
+Manually review/merge `global-config/AGENTS.md`, preserving existing rules and adapting dependency paths. It is not installed automatically. Reopen Codex to refresh instructions; they do not enforce routing in every application.
 
-## 6. Configure External Key Pool (`jev-pool`)
+## 3. Private credentials
 
-- **Pool vs. standalone auth:** Standalone `jev` reads `~/.config/typesafe/api_key` (`0600`) or `TYPESAFE_API_KEY`, whereas `run_workflow.py` calls `jev-pool` directly. Running `jev auth set` alone or setting only `TYPESAFE_API_KEY` is **not sufficient** for workflows.
-- **Directory & slots:** `jev-pool` requires a real owner-only directory `~/.config/typesafe/keys` (`0700`, symlinks refused) containing regular owner-only `*.key` files (`0600`). Slots map in lexicographical filename order with no failover on rejection:
-  - `task` defaults to **slot `1`** (`key-01.key`).
-  - `quant` defaults to **slot `2`** (`key-02.key`). With one key, pass `--key-slot 1` for `quant`.
-- **Create `key-01.key` outside the repo** via `getpass` (real-path symlink check, owner-only `0700`/`0600`, `O_EXCL | O_NOFOLLOW`, no existing-key overwrite, no keys in `argv`/history):
-  ```bash
-  python3 -c '
-  import getpass, os
-  from pathlib import Path
-  d = Path.home() / ".config/typesafe/keys"
-  d.parent.mkdir(parents=True, exist_ok=True)
-  if d.is_symlink(): raise SystemExit("Refusing symlink directory")
-  d.mkdir(mode=0o700, exist_ok=True)
-  os.chmod(d, 0o700)
-  k = getpass.getpass("TypeSafe API key (slot 1): ").strip()
-  assert k and k.isascii(), "Key must be non-empty ASCII"
-  fd = os.open(d / "key-01.key", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-  with os.fdopen(fd, "w", encoding="ascii") as f: f.write(k + "\n")
-  '
-  ```
+Workflows use `jev-pool`. Put TypeSafe keys outside this repo in `~/.config/typesafe/keys`: real owner-only directory (`0700`), private regular `*.key` files (`0600`), no symlinks. Enter values privately without shell-history literals. Lexicographic filenames determine slots: task defaults to 1, quant to 2; with one key, use `--key-slot 1` for quant. Standalone `jev auth set` or `TYPESAFE_API_KEY` alone is insufficient.
 
-## 7. Run Minimal Live Smoke Task
+Optional APIs accept existing private files via `ZAI_API_KEY_FILE` or `OPENROUTER_API_KEY_FILE`. Defaults check `~/.config/ai-router/<provider>.key`, then `credentials.json`. Installation includes/changes no keys.
 
-1. **Create an isolated workspace and packet** with the exact scope and test command:
-   ```bash
-   mkdir -p /tmp/agy-smoke-ws/tests
-   cat << 'EOF' > /tmp/agy-smoke-packet.txt
-   TASK: Create greet.py with hello(name) returning "Hi, <name>!" and unit test in tests/test_greet.py.
-   WRITE SCOPE: greet.py, tests/test_greet.py.
-   VERIFY: authorized shell command is exactly: python3 -B -m unittest discover -s tests -v
-   EOF
-   ```
-2. **Run the headless command** (`--output-dir` must be a **new** path outside write scope):
-   ```bash
-   python3 -B ~/.agents/skills/antigravity-task-runner/scripts/run_workflow.py \
-     --packet-file /tmp/agy-smoke-packet.txt \
-     --workspace /tmp/agy-smoke-ws \
-     --id smoke-1 \
-     --scope greet.py tests/test_greet.py \
-     --verify-cmd "python3 -B -m unittest discover -s tests -v" \
-     --key-slot 1 \
-     --output-dir /tmp/agy-smoke-out
-   ```
-3. **Verify output:** In `/tmp/agy-smoke-out/workflow-result.json` and `/tmp/agy-smoke-out/proof-pack.txt`, confirm exit code `0`, `verdict: "PASS"`, model pin `gemini-4-argon-high` (`effort: "high"`), and passing tests.
+## 4. Routing and review
 
-## 8. Troubleshooting
+| WORKFLOW_WORKER | Model selection |
+|---|---|
+| `agy` (default) | `AGY_MODEL`: either High model above |
+| `devin` | `swe-1-6-slow` |
+| `opencode` | Exact free `OPENCODE_MODEL=provider/model` |
+| `zai` | `glm-4.5-flash` |
+| `openrouter` | Exact `OPENROUTER_MODEL` ending `:free`, zero pricing |
 
-If a run fails or stops with `BLOCKED`, read the reported error or `proof-pack.txt` and check CLI authentication and model availability, the requested key slot and permissions, write scope, and a fresh output directory.
+Pi is not integrated. Coordinator fallback to smaller/free routes follows clean quota/auth/availability/timeout failures, sharing the initial-plus-two-extra ledger. There is no automatic runtime switching or safety/proof/permission bypass. Main Codex is last resort outside the worker adapter. Jev 1.13.0, independent High review (plus quant obligations), and fresh scoped Codex final review remain required. The 100k-token/180-second per-call discipline needs coordinator supervision, not an SDK hard token cap.
 
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for provenance and third-party notices.
+Direct API final review needs a private `WORKFLOW_REVIEW_CONTEXT_FILE` outside the workspace, binding final hashes and fresh literal preflight. The two-phase procedure is in `antigravity-task-runner/references/routing.md`; `--chatgpt-review off` alone never authorizes completion.
+
+## 5. Isolated sample
+
+Use fresh workspace/output paths:
+
+```bash
+mkdir -p /tmp/agy-demo-ws
+cat > /tmp/agy-demo-packet.txt <<'EOF'
+TASK: Add greet.py with hello(name) returning "Hi, <name>!" and test_greet.py unit tests.
+WRITE SCOPE: greet.py, test_greet.py.
+VERIFY: python3 -B -m unittest discover -v
+EOF
+AGY_MODEL=gemini-4-argon-high python3 -B ~/.agents/skills/antigravity-task-runner/scripts/run_workflow.py /tmp/agy-demo-packet.txt   --workspace /tmp/agy-demo-ws --id demo --scope greet.py test_greet.py   --verify-cmd "python3 -B -m unittest discover -v" --key-slot 1   --worker-timeout 180 --max-reworks 0 --output-dir /tmp/agy-demo-out
+```
+
+Require `workflow-final-result.json` PASS, native `workflow-result.json` PASS, and retained `proof-pack.txt`. On BLOCKED inspect the reason; never bypass gates. Provenance: `THIRD_PARTY_NOTICES.md`.

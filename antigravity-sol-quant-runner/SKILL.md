@@ -7,6 +7,8 @@ metadata:
 
 # Antigravity Sol quant runner
 
+> **Routing Precedence Notice:** Current routing policy in [../antigravity-task-runner/references/routing.md](../antigravity-task-runner/references/routing.md) **explicitly supersedes** conflicting legacy provider lists, wait-only instructions, and absolute local-Codex prohibitions **below**; all unrelated security, quant, retry, financial, and reviewer rules remain. External-first (`WORKFLOW_WORKER=agy|devin|opencode|zai|openrouter`, default `agy`) allows fallback to permitted smaller/free CLIs and free APIs on clean quota/availability/auth/timeout errors, then current main Codex last-resort outside `run_workflow.py` with Jev 1.13.0, two independent High + stronger reviews, and fresh final review.
+
 Use this quant profile when changing or auditing trading mathematics, signals, sizing, PnL, funding, liquidation, or backtests; use `antigravity-task-runner` for ordinary engineering. Codex coordinates and never treats model output as live-trading approval.
 
 ## Modes and core quant invariants

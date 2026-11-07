@@ -1,6 +1,3 @@
-# Release Notes
+# Release 2026.11.07.1
 
-- **Simplified documentation:** Streamlined user-facing English documentation and removed redundant setup, internal architecture, and duplicate provenance sections.
-- **Unchanged runtime:** All skill behavior, model pins, verification gates, and key-pool safeguards remain unchanged.
-- **Setup & verification:** Follow the complete installation and smoke-test walkthrough in [INSTALL.md](INSTALL.md).
-- **Provenance:** Complete authorship and third-party license notices remain in `THIRD_PARTY_NOTICES.md`.
+Synchronized reviewed global source, Z.ai/OpenRouter free API workers, and coordinator fallback policy. Jev, independent High, scoped Codex final review, and safety gates remain required. No automatic runtime failover or future quota guarantee is claimed.

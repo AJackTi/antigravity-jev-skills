@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "release": "2026.11.05.1",
+  "release": "2026.11.07.1",
   "source_profile": "optimized-global",
   "global_policy": {
     "archive_path": "global-config/AGENTS.md",
@@ -18,32 +18,32 @@
       "bytes": 369
     },
     "INSTALL.md": {
-      "sha256": "910414635d3a1c4c381e5a3c99bbd3f20343a32201f7f4f292f1f71231959200",
-      "bytes": 5635
+      "sha256": "4dfec69540430ea3000c7e4e11582849d5d1ba3b85516416db712d7fd602106d",
+      "bytes": 4062
     },
     "README.md": {
-      "sha256": "dd67fae486c38da8b8a969d95812df0a91cc3f58893c647c7690abeb2b825d7a",
-      "bytes": 1218
+      "sha256": "e85f2ae6dcc722f36abc3b987bd6ea7506a67e405f6656b8e610060d0adeab3f",
+      "bytes": 677
     },
     "RELEASE_NOTES.md": {
-      "sha256": "bb0e5f833314faff7709755276fdb95e13850cb0fdb80bf76f24149816d14993",
-      "bytes": 524
+      "sha256": "9d9139c1051cbeb8d403cce4dc218445c62e1962e1f7a3467b8f802708748789",
+      "bytes": 280
     },
     "THIRD_PARTY_NOTICES.md": {
       "sha256": "70b2ca6b9536345982638e00f69c7876fc8ecef20abbd51ffbd4f76b4adb6abc",
       "bytes": 2301
     },
     "VERIFICATION.json": {
-      "sha256": "95ad9de7b1d7fb593b04df3719d8f464f153d0e7739a5d342d744b7e40bd9af0",
-      "bytes": 3991
+      "sha256": "309af586fe9b3f8b7e9e91cd0973e5ee28a817ababd2a01d8068b378b7391261",
+      "bytes": 12596
     },
     "VERIFICATION.md": {
-      "sha256": "7d5a137111a2d34cf5cc388e515b83c8126fc1e280b7f745ee28635f1eac7494",
-      "bytes": 1142
+      "sha256": "4b82bdb8264750d1e741bb9806c28100210fa0b113c21ffcbc36ae51f63c0308",
+      "bytes": 579
     },
     "antigravity-sol-quant-runner/SKILL.md": {
-      "sha256": "420564a58d06f54c82682ae42b3ee4b9449d657b69b747f56ad74e5fdced4abf",
-      "bytes": 4893
+      "sha256": "7abae00af941116142dcf52de52b3f47fffefa8897c560b867dc1da5388ffaae",
+      "bytes": 5602
     },
     "antigravity-sol-quant-runner/agents/openai.yaml": {
       "sha256": "7750d950343f6451b46c4899a80cd14997eb61cb1f034ada1fd3fe6e335a0e3e",
@@ -62,8 +62,8 @@
       "bytes": 3053
     },
     "antigravity-task-runner/SKILL.md": {
-      "sha256": "7a4521555a0e185c40ed07cbefe08cfe1f804445ae973a4d22d7f31dad6ecc84",
-      "bytes": 12620
+      "sha256": "a2db9fd750d16f4f15d92910ea554abf4f7003c39ad5dd9d03cbb886180c4e0d",
+      "bytes": 13351
     },
     "antigravity-task-runner/agents/openai.yaml": {
       "sha256": "ba45b04600f40291ea6dafa590ca1944167c66ea59422995bea1ae89e006dca0",
@@ -74,24 +74,32 @@
       "bytes": 639
     },
     "antigravity-task-runner/references/jev-gate.md": {
-      "sha256": "47070d5f2dd02228630a02c82af0a56e1f4ff138b9cc0e464fb64077108acf62",
-      "bytes": 14745
+      "sha256": "a6b4a71347e261a2b33e8bd3ea411ca24ab68c90780f78bdef49844a1dc26672",
+      "bytes": 15404
+    },
+    "antigravity-task-runner/references/routing.md": {
+      "sha256": "0b5bf6cc93879831da38aee3093c2d4d8cd43c4e115acd8d529b2a10a1889b1d",
+      "bytes": 7112
     },
     "antigravity-task-runner/scripts/build_task_packet.py": {
       "sha256": "f9135ec38e42e1b9f76d8239028af853eb60e9af4b539a66d3f84a08b10816f6",
       "bytes": 2994
     },
     "antigravity-task-runner/scripts/chatgpt_review.py": {
-      "sha256": "f7947d1c34b0c33a46770e7c1d4ec9a422fb5e92bf24dfadf229dd40c54c3032",
-      "bytes": 97194
+      "sha256": "d5aaf8cda9cbf5f6103de9fccf2d907dc11182a6ab5919a51962b1d23cede6b3",
+      "bytes": 113564
     },
     "antigravity-task-runner/scripts/devin_worker.py": {
-      "sha256": "6324c7e14f77767a1477778fc9901c19b86c76f7ddf9321a911e01c57f8384a6",
-      "bytes": 56715
+      "sha256": "bf21dcf13b83293f9383108e7a7489dad3784141c90141fe8a59b8f6948fed55",
+      "bytes": 61549
+    },
+    "antigravity-task-runner/scripts/free_api_worker.py": {
+      "sha256": "daa2041d1032c41f91a8b633d5bc5ba96ab84375e3d7980a2c63abf2a39bb9e7",
+      "bytes": 62754
     },
     "antigravity-task-runner/scripts/jev_review_gate.py": {
-      "sha256": "428652562ea4a961f65bfede4ca461f12b9dc0f69a6a3acd9a84c59211ac5809",
-      "bytes": 43871
+      "sha256": "a246c1897011624a6ad870de9d53a78490db635e44e224b3eb53fac669423a77",
+      "bytes": 52494
     },
     "antigravity-task-runner/scripts/opencode_worker.py": {
       "sha256": "d8acd8941f6eaf5b2b91528c660f99567509e9d6a3d70f1249a8cb5029ed16fe",
@@ -106,12 +114,48 @@
       "bytes": 1774
     },
     "antigravity-task-runner/scripts/run_workflow.py": {
-      "sha256": "80602fe200648f78c23caf78f7af87c576f76fcf3a44554a45c7c2e321ba4f28",
-      "bytes": 102451
+      "sha256": "2b83663d2e541ed77e38579bb63aff9847b15d573a8edbabdc625fde91b71f84",
+      "bytes": 110663
     },
     "antigravity-task-runner/tests/fixtures/devin_tool_defs.json": {
       "sha256": "6acea74cd027caeb8012f9e4413baa8233f96f6e0e64705e1065427d7077238c",
       "bytes": 5201
+    },
+    "antigravity-task-runner/tests/test_api_accounting.py": {
+      "sha256": "22996122eb6b29e7695ceb8a7310b1fd423aceae46c7e2d8df7f70f841cb0d34",
+      "bytes": 6457
+    },
+    "antigravity-task-runner/tests/test_api_dispatch.py": {
+      "sha256": "f41c13eca90bfb103605793c09be64cdaaa3600ce09d8e98c5d9772db111d86b",
+      "bytes": 4472
+    },
+    "antigravity-task-runner/tests/test_api_fallback_small.py": {
+      "sha256": "46ea7397cd63614bf4a56bee2c235f507edf7d5a8781fac3ad020ebd763c4e20",
+      "bytes": 6801
+    },
+    "antigravity-task-runner/tests/test_api_negative.py": {
+      "sha256": "8416f98b25cdb47b943922aff799620b50a06076638b86cbabe2f62e4963a1f4",
+      "bytes": 3902
+    },
+    "antigravity-task-runner/tests/test_api_review.py": {
+      "sha256": "25084c10a26336c65aa4c835ca8386561eed3f65d17ef065aef810116d5f9e1d",
+      "bytes": 2044
+    },
+    "antigravity-task-runner/tests/test_api_review_positive.py": {
+      "sha256": "0d820cc33148ed45375930ca16f330fe65b5151ca7b59277479747c406b1e247",
+      "bytes": 5256
+    },
+    "antigravity-task-runner/tests/test_api_strict_json.py": {
+      "sha256": "fe670a128029be067e311de844bfc1fd0936e9454579e00a0e5a3ea3a05bfda1",
+      "bytes": 4167
+    },
+    "antigravity-task-runner/tests/test_api_usage_small.py": {
+      "sha256": "689a9b6515723cae28cc34130fb4ee1da4b91b8da331d209ac9c1c516a4a9d2a",
+      "bytes": 6450
+    },
+    "antigravity-task-runner/tests/test_catalog_optional.py": {
+      "sha256": "bbcea62f971ffd46cbaba7f9a6445c1730231a563a786ba487e6a290e4b464ef",
+      "bytes": 1693
     },
     "antigravity-task-runner/tests/test_chatgpt_integration.py": {
       "sha256": "46cc91764f72514c1faa4c8e551e2a2a488328711deccb1954fd825cbd887c28",
@@ -125,6 +169,10 @@
       "sha256": "813cf6d3848d976d2bfbba6cd705641eede757fe45e728ffca664517efa8085f",
       "bytes": 59486
     },
+    "antigravity-task-runner/tests/test_free_api_worker.py": {
+      "sha256": "47a409950640c975c82c6f313703d6781733d6aa73bb46085f918678e2de7436",
+      "bytes": 12396
+    },
     "antigravity-task-runner/tests/test_jev_review_gate.py": {
       "sha256": "d4f06032994c49bcaa6646c08d079878ff78f1759f60e0a6bf1529d6fa6e62bd",
       "bytes": 36239
@@ -137,17 +185,37 @@
       "sha256": "33ba980c2f653e1549db938e95bab2b8a383f374f9ed2e71bb01cd0eede5e072",
       "bytes": 35269
     },
+    "antigravity-task-runner/tests/test_openrouter_json_messages.py": {
+      "sha256": "e7538dc1608952fe75213fe0b33b8583813b0975c3d6f72e1bd31502bea510c9",
+      "bytes": 4086
+    },
+    "antigravity-task-runner/tests/test_or_required_json.py": {
+      "sha256": "4e790a612ade46b2bb33dae830aea1ca9a74b459dc452a792f28d741fb3f0b47",
+      "bytes": 2944
+    },
+    "antigravity-task-runner/tests/test_review_context.py": {
+      "sha256": "2d9dcf95ef4d8b0e7f41e9540a9e4a7441cc6e8025fb9c499aeaf5e8b483eb9e",
+      "bytes": 8570
+    },
     "antigravity-task-runner/tests/test_run_workflow.py": {
-      "sha256": "821095813f277ea166ebeeefceacf6794f2a5933e038a5b6861e9f49138feb57",
-      "bytes": 57805
+      "sha256": "26c869a13ef92df097e8aa83e294ca1048d589813b64c3187636e0ece24a7083",
+      "bytes": 59854
+    },
+    "antigravity-task-runner/tests/test_verification_output.py": {
+      "sha256": "35b2981569cf02d50a958751b92f1596943a700e42d2019a0680d9356ec1d5da",
+      "bytes": 2720
     },
     "antigravity-task-runner/tests/test_workflows.py": {
       "sha256": "4803a0871e59b25668b4199e881aebb997989e0ea3a4b09b633add22464ada3d",
       "bytes": 2375
     },
+    "antigravity-task-runner/tests/test_zai_direct_mode.py": {
+      "sha256": "6f3c5c5740aea29e534ce5d9477610b6bb3999cdcaac48ce2ff127d3eee27be9",
+      "bytes": 1753
+    },
     "global-config/AGENTS.md": {
-      "sha256": "5a4d7806ea97b5f4880376398797f8fd37a49b2c69268b5e39532408f15a4eda",
-      "bytes": 11065
+      "sha256": "bcf07cb75fd88ca5d5a276e9244f3cd5aaf3f7f91b2e1a18b02e3eb8afe23e1e",
+      "bytes": 17539
     },
     "install.py": {
       "sha256": "2b93bcd1ab98edf6a8e9eeacdebcbd2997326fef1a8c0e99e0402bb7b6d91d2e",
@@ -210,8 +278,8 @@
       "bytes": 9062
     },
     "jev-calibrated-decisions/tests/test_key_pool.py": {
-      "sha256": "98b1db873e4248d9d250aa7a701cd0f1a2127bfa244a87671fabdd0effd3a0b1",
-      "bytes": 8342
+      "sha256": "d1ae9c1d4d6ddb67eaed9f4499e48deac2e944fd95d0a2f0d28587f3970ee037",
+      "bytes": 8338
     },
     "licenses/typesafe-ai-skills-MIT.txt": {
       "sha256": "835f233f1d6ed84a9b9a351aba0689b47644a4137d6316911fc7957bde523b02",

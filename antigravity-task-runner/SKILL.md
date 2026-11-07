@@ -7,6 +7,8 @@ metadata:
 
 # Antigravity task runner
 
+> **Routing Precedence Notice:** Current routing policy in [references/routing.md](references/routing.md) **explicitly supersedes** conflicting legacy provider lists, wait-only instructions, and absolute local-Codex prohibitions **below**; all unrelated security, quant, retry, financial, and reviewer rules remain in force. External-first (`WORKFLOW_WORKER=agy|devin|opencode|zai|openrouter`, default `agy`) allows coordinator fallback to permitted smaller/free CLIs and direct free APIs (`zai`, `openrouter` `:free`) on clean availability/quota/auth/timeout errors (counted in the 2-extra-execution ledger, 100k/180s), then current main Codex last-resort outside `run_workflow.py` with Jev 1.13.0, High, and fresh final review.
+
 Use this skill as a bounded orchestration contract. Codex coordinates intake and final review; do not claim consensus or correctness without reproducible evidence.
 
 ## Modes and safety

@@ -862,6 +862,120 @@ def apply_files(
     return {rel: sha256_bytes(data) for rel, _target, _orig, data in plan}
 
 
+def read_private_regular_file(
+    path: Path, *, label: str = 'credential file', max_bytes: int = 4096
+) -> bytes:
+    """Read a bounded, owner-only, private (no group/world bits), unaliased regular file without following symlinks."""
+    path = Path(path)
+    if os.path.islink(path.parent):
+        raise DevinBlocked(f'{label} parent directory is a symlink')
+    if not os.path.lexists(path):
+        raise DevinBlocked(f'{label} missing')
+    try:
+        st = os.lstat(path)
+    except OSError as exc:
+        raise DevinBlocked(f'{label} unreadable') from exc
+    if stat.S_ISLNK(st.st_mode):
+        raise DevinBlocked(f'{label} is a symlink')
+    if stat.S_ISDIR(st.st_mode):
+        raise DevinBlocked(f'{label} is a directory')
+    if not stat.S_ISREG(st.st_mode) or st.st_nlink > 1:
+        raise DevinBlocked(f'{label} is not an unaliased regular file')
+    if st.st_uid != os.getuid():
+        raise DevinBlocked(f'{label} is not owned by the current user')
+    if (st.st_mode & 0o077) != 0:
+        raise DevinBlocked(f'{label} has insecure group/world permissions')
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
+    except OSError as exc:
+        raise DevinBlocked(f'{label} unreadable') from exc
+    try:
+        with os.fdopen(fd, 'rb') as fh:
+            fst = os.fstat(fh.fileno())
+            if (
+                not stat.S_ISREG(fst.st_mode)
+                or fst.st_ino != st.st_ino
+                or fst.st_dev != st.st_dev
+                or fst.st_uid != os.getuid()
+                or (fst.st_mode & 0o077) != 0
+            ):
+                raise DevinBlocked(f'{label} failed descriptor ownership/mode verification')
+            if fst.st_size <= 0:
+                raise DevinBlocked(f'{label} is empty')
+            if fst.st_size > max_bytes:
+                raise DevinBlocked(f'{label} exceeds {max_bytes} bytes')
+            raw_bytes = fh.read(max_bytes + 1)
+    except DevinBlocked:
+        raise
+    except OSError as exc:
+        raise DevinBlocked(f'{label} unreadable') from exc
+    if not raw_bytes:
+        raise DevinBlocked(f'{label} is empty')
+    if len(raw_bytes) > max_bytes:
+        raise DevinBlocked(f'{label} exceeds {max_bytes} bytes')
+    return raw_bytes
+
+
+def capture_workspace_snapshot(
+    workspace: Path, scope_files: list[str]
+) -> dict[str, dict[str, object]]:
+    """Capture original workspace bytes and sha256 preconditions for declared scope files across provider switches."""
+    workspace = Path(workspace).resolve()
+    if not workspace.is_dir():
+        raise DevinBlocked('workspace is not a directory')
+    snapshot: dict[str, dict[str, object]] = {}
+    for rel in validate_scope_paths(scope_files):
+        target = safe_target(workspace, rel)
+        if not os.path.lexists(target):
+            snapshot[rel] = {'exists': False, 'sha256': None, 'bytes': None, 'mode': None}
+            continue
+        data = read_regular_nofollow(target)
+        mode = stat.S_IMODE(os.lstat(target).st_mode)
+        snapshot[rel] = {'exists': True, 'sha256': sha256_bytes(data), 'bytes': data, 'mode': mode}
+    return snapshot
+
+
+def restore_workspace_snapshot(
+    workspace: Path, snapshot: dict[str, dict[str, object]]
+) -> dict[str, str | None]:
+    """Restore declared workspace files to the captured baseline snapshot and verify post-restore hashes."""
+    workspace = Path(workspace).resolve()
+    restored: dict[str, str | None] = {}
+    for rel in validate_scope_paths(list(snapshot.keys())):
+        entry = snapshot[rel]
+        target = safe_target(workspace, rel)
+        if not entry.get('exists'):
+            if os.path.lexists(target):
+                os.unlink(target)
+            if os.path.lexists(target):
+                raise DevinBlocked(f'failed to remove created file during snapshot restore: {rel}')
+            restored[rel] = None
+            continue
+        orig_bytes = entry.get('bytes')
+        orig_mode = entry.get('mode')
+        if not isinstance(orig_bytes, bytes) or not isinstance(orig_mode, int):
+            raise DevinBlocked(f'malformed workspace snapshot entry: {rel}')
+        fd, tmp = tempfile.mkstemp(prefix='.snapshot-restore-', dir=target.parent)
+        try:
+            with os.fdopen(fd, 'wb') as fh:
+                fh.write(orig_bytes)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.chmod(tmp, orig_mode)
+            os.replace(tmp, target)
+        finally:
+            if os.path.lexists(tmp):
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+        verify = read_regular_nofollow(target)
+        if verify != orig_bytes:
+            raise DevinBlocked(f'workspace snapshot restore verification failed: {rel}')
+        restored[rel] = sha256_bytes(verify)
+    return restored
+
+
 # ---------------------------------------------------------------- one fresh Devin session
 
 

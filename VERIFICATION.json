@@ -1,114 +1,330 @@
 {
-  "status": "PASS",
-  "release": "2026.10.31.7",
-  "created_at": "2026-10-31T14:23:06.692940+00:00",
-  "scope": "Documentation-only pruning; runtime, tests, policy and canonical license files unchanged.",
-  "documentation_checks": {
-    "before": {
-      "README.md": {
-        "chars": 1218,
-        "lines": 24,
-        "sha256": "dd67fae486c38da8b8a969d95812df0a91cc3f58893c647c7690abeb2b825d7a"
-      },
-      "INSTALL.md": {
-        "chars": 8508,
-        "lines": 130,
-        "sha256": "47808ac2eff43dbadbb5a82bea3b146556d7a73685100bb3389638108c17f42f"
-      },
-      "RELEASE_NOTES.md": {
-        "chars": 1477,
-        "lines": 24,
-        "sha256": "7a16168fbd91a24a90b7a40f0d7fe21a8d462541035d99c5720ccca56a8d6b17"
-      }
-    },
-    "after": {
-      "README.md": {
-        "chars": 1218,
-        "lines": 24
-      },
-      "INSTALL.md": {
-        "chars": 5635,
-        "lines": 113
-      },
-      "RELEASE_NOTES.md": {
-        "chars": 524,
-        "lines": 6
-      }
-    },
-    "preserved_install_code_blocks": 10,
-    "links": "PASS",
-    "shell_syntax": "PASS",
-    "synthetic_key_setup_and_existing_key_preservation": "PASS"
-  },
-  "tests": {
-    "existing_antigravity_tests": 36,
-    "exit_code": 0,
-    "new_tests_written": false
-  },
-  "reviews": [
+  "release": "2026.11.07.1",
+  "created_at": "2026-11-07T12:48:50.359182+00:00",
+  "scope": "Exact global source export; four English documentation files updated under explicit task-specific Codex exception; no installed global changes.",
+  "source_sync": [
     {
-      "seam": "workflow",
-      "verdict": "PASS",
-      "reviewers": [
-        {
-          "conversation_id": "2f09dec4-fe58-4924-b4ba-a0a5ad5f2055",
-          "model": "gemini-4-argon-high",
-          "effort": "high",
-          "effort_verification": "explicit --effort high plus verified High model slug; init omits effort",
-          "verdict": "PASS",
-          "confidence": 99.0,
-          "findings": [],
-          "resolved_questions": [],
-          "residual_risk": "Documentation-only changes; existing local symlinks and external key-pool files remain managed outside repository docs and are unaffected, while offline unit tests do not verify live API connectivity.",
-          "usage": {
-            "input_tokens": 6599,
-            "output_tokens": 3419,
-            "thinking_tokens": 3357,
-            "cache_read_tokens": 5857,
-            "total_tokens": 10018
-          }
-        }
-      ]
+      "package": "antigravity-task-runner/SKILL.md",
+      "sha256": "a2db9fd750d16f4f15d92910ea554abf4f7003c39ad5dd9d03cbb886180c4e0d"
     },
     {
-      "seam": "final-wording",
-      "verdict": "PASS",
-      "reviewers": [
-        {
-          "conversation_id": "7d9fe665-22bb-4b1f-97ff-a87ed41d2c88",
-          "model": "gemini-4-argon-high",
-          "effort": "high",
-          "effort_verification": "explicit --effort high plus verified High model slug; init omits effort",
-          "verdict": "PASS",
-          "confidence": 99.0,
-          "findings": [],
-          "resolved_questions": [],
-          "residual_risk": "Documentation-only change limited to the single paragraph under ## 8. Troubleshooting in INSTALL.md; runtime behavior is unchanged and specific validation nuances remain governed by the underlying CLI/runner implementation and error output.",
-          "usage": {
-            "input_tokens": 3215,
-            "output_tokens": 1329,
-            "thinking_tokens": 1261,
-            "cache_read_tokens": 5855,
-            "total_tokens": 4544
-          }
-        }
-      ]
+      "package": "antigravity-task-runner/agents/openai.yaml",
+      "sha256": "ba45b04600f40291ea6dafa590ca1944167c66ea59422995bea1ae89e006dca0"
+    },
+    {
+      "package": "antigravity-task-runner/fixtures/task_cases.json",
+      "sha256": "cbc397189081b883c2998d512a71b94ccb6af04e64195e2d4a5fb8be0aa18d78"
+    },
+    {
+      "package": "antigravity-task-runner/references/jev-gate.md",
+      "sha256": "a6b4a71347e261a2b33e8bd3ea411ca24ab68c90780f78bdef49844a1dc26672"
+    },
+    {
+      "package": "antigravity-task-runner/references/routing.md",
+      "sha256": "0b5bf6cc93879831da38aee3093c2d4d8cd43c4e115acd8d529b2a10a1889b1d"
+    },
+    {
+      "package": "antigravity-task-runner/scripts/build_task_packet.py",
+      "sha256": "f9135ec38e42e1b9f76d8239028af853eb60e9af4b539a66d3f84a08b10816f6"
+    },
+    {
+      "package": "antigravity-task-runner/scripts/chatgpt_review.py",
+      "sha256": "d5aaf8cda9cbf5f6103de9fccf2d907dc11182a6ab5919a51962b1d23cede6b3"
+    },
+    {
+      "package": "antigravity-task-runner/scripts/devin_worker.py",
+      "sha256": "bf21dcf13b83293f9383108e7a7489dad3784141c90141fe8a59b8f6948fed55"
+    },
+    {
+      "package": "antigravity-task-runner/scripts/free_api_worker.py",
+      "sha256": "daa2041d1032c41f91a8b633d5bc5ba96ab84375e3d7980a2c63abf2a39bb9e7"
+    },
+    {
+      "package": "antigravity-task-runner/scripts/jev_review_gate.py",
+      "sha256": "a246c1897011624a6ad870de9d53a78490db635e44e224b3eb53fac669423a77"
+    },
+    {
+      "package": "antigravity-task-runner/scripts/opencode_worker.py",
+      "sha256": "d8acd8941f6eaf5b2b91528c660f99567509e9d6a3d70f1249a8cb5029ed16fe"
+    },
+    {
+      "package": "antigravity-task-runner/scripts/record_run.py",
+      "sha256": "1c76694f27d8b3ee9778afe67f2c399b4e1e158bc61794a8563ee9c7edff1200"
+    },
+    {
+      "package": "antigravity-task-runner/scripts/replay_fixtures.py",
+      "sha256": "bbc2d6fef85df7f0d9e305a85118cfdb0cbaf868da774d46df914d988239b755"
+    },
+    {
+      "package": "antigravity-task-runner/scripts/run_workflow.py",
+      "sha256": "2b83663d2e541ed77e38579bb63aff9847b15d573a8edbabdc625fde91b71f84"
+    },
+    {
+      "package": "antigravity-task-runner/tests/fixtures/devin_tool_defs.json",
+      "sha256": "6acea74cd027caeb8012f9e4413baa8233f96f6e0e64705e1065427d7077238c"
+    },
+    {
+      "package": "antigravity-task-runner/tests/test_api_accounting.py",
+      "sha256": "22996122eb6b29e7695ceb8a7310b1fd423aceae46c7e2d8df7f70f841cb0d34"
+    },
+    {
+      "package": "antigravity-task-runner/tests/test_api_dispatch.py",
+      "sha256": "f41c13eca90bfb103605793c09be64cdaaa3600ce09d8e98c5d9772db111d86b"
+    },
+    {
+      "package": "antigravity-task-runner/tests/test_api_fallback_small.py",
+      "sha256": "46ea7397cd63614bf4a56bee2c235f507edf7d5a8781fac3ad020ebd763c4e20"
+    },
+    {
+      "package": "antigravity-task-runner/tests/test_api_negative.py",
+      "sha256": "8416f98b25cdb47b943922aff799620b50a06076638b86cbabe2f62e4963a1f4"
+    },
+    {
+      "package": "antigravity-task-runner/tests/test_api_review.py",
+      "sha256": "25084c10a26336c65aa4c835ca8386561eed3f65d17ef065aef810116d5f9e1d"
+    },
+    {
+      "package": "antigravity-task-runner/tests/test_api_review_positive.py",
+      "sha256": "0d820cc33148ed45375930ca16f330fe65b5151ca7b59277479747c406b1e247"
+    },
+    {
+      "package": "antigravity-task-runner/tests/test_api_strict_json.py",
+      "sha256": "fe670a128029be067e311de844bfc1fd0936e9454579e00a0e5a3ea3a05bfda1"
+    },
+    {
+      "package": "antigravity-task-runner/tests/test_api_usage_small.py",
+      "sha256": "689a9b6515723cae28cc34130fb4ee1da4b91b8da331d209ac9c1c516a4a9d2a"
+    },
+    {
+      "package": "antigravity-task-runner/tests/test_catalog_optional.py",
+      "sha256": "bbcea62f971ffd46cbaba7f9a6445c1730231a563a786ba487e6a290e4b464ef"
+    },
+    {
+      "package": "antigravity-task-runner/tests/test_chatgpt_integration.py",
+      "sha256": "46cc91764f72514c1faa4c8e551e2a2a488328711deccb1954fd825cbd887c28"
+    },
+    {
+      "package": "antigravity-task-runner/tests/test_chatgpt_review.py",
+      "sha256": "90660ca17800b9f65212abafd0e6f8bfdf5eccf31812d1d18e87e87d758ba04d"
+    },
+    {
+      "package": "antigravity-task-runner/tests/test_devin_worker.py",
+      "sha256": "813cf6d3848d976d2bfbba6cd705641eede757fe45e728ffca664517efa8085f"
+    },
+    {
+      "package": "antigravity-task-runner/tests/test_free_api_worker.py",
+      "sha256": "47a409950640c975c82c6f313703d6781733d6aa73bb46085f918678e2de7436"
+    },
+    {
+      "package": "antigravity-task-runner/tests/test_jev_review_gate.py",
+      "sha256": "d4f06032994c49bcaa6646c08d079878ff78f1759f60e0a6bf1529d6fa6e62bd"
+    },
+    {
+      "package": "antigravity-task-runner/tests/test_node_test_count.py",
+      "sha256": "673b9fb6d4805190f09e10f5d8bfdc0c266b068342e788b54005d61f3c485450"
+    },
+    {
+      "package": "antigravity-task-runner/tests/test_opencode_worker.py",
+      "sha256": "33ba980c2f653e1549db938e95bab2b8a383f374f9ed2e71bb01cd0eede5e072"
+    },
+    {
+      "package": "antigravity-task-runner/tests/test_openrouter_json_messages.py",
+      "sha256": "e7538dc1608952fe75213fe0b33b8583813b0975c3d6f72e1bd31502bea510c9"
+    },
+    {
+      "package": "antigravity-task-runner/tests/test_or_required_json.py",
+      "sha256": "4e790a612ade46b2bb33dae830aea1ca9a74b459dc452a792f28d741fb3f0b47"
+    },
+    {
+      "package": "antigravity-task-runner/tests/test_review_context.py",
+      "sha256": "2d9dcf95ef4d8b0e7f41e9540a9e4a7441cc6e8025fb9c499aeaf5e8b483eb9e"
+    },
+    {
+      "package": "antigravity-task-runner/tests/test_run_workflow.py",
+      "sha256": "26c869a13ef92df097e8aa83e294ca1048d589813b64c3187636e0ece24a7083"
+    },
+    {
+      "package": "antigravity-task-runner/tests/test_verification_output.py",
+      "sha256": "35b2981569cf02d50a958751b92f1596943a700e42d2019a0680d9356ec1d5da"
+    },
+    {
+      "package": "antigravity-task-runner/tests/test_workflows.py",
+      "sha256": "4803a0871e59b25668b4199e881aebb997989e0ea3a4b09b633add22464ada3d"
+    },
+    {
+      "package": "antigravity-task-runner/tests/test_zai_direct_mode.py",
+      "sha256": "6f3c5c5740aea29e534ce5d9477610b6bb3999cdcaac48ce2ff127d3eee27be9"
+    },
+    {
+      "package": "antigravity-sol-quant-runner/SKILL.md",
+      "sha256": "7abae00af941116142dcf52de52b3f47fffefa8897c560b867dc1da5388ffaae"
+    },
+    {
+      "package": "antigravity-sol-quant-runner/agents/openai.yaml",
+      "sha256": "7750d950343f6451b46c4899a80cd14997eb61cb1f034ada1fd3fe6e335a0e3e"
+    },
+    {
+      "package": "antigravity-sol-quant-runner/fixtures/quant_cases.json",
+      "sha256": "7dc86c4566ddd7b982a6146fd67b765701413bee3d5655270352d14b129459d2"
+    },
+    {
+      "package": "antigravity-sol-quant-runner/references/quant-audit.md",
+      "sha256": "2836f8674c842553ba6b38570d4e5960708598da6dbcc34794224fed1fa6e1aa"
+    },
+    {
+      "package": "antigravity-sol-quant-runner/scripts/build_quant_audit_pack.py",
+      "sha256": "4192bb2b1be4cbe25d45f1106fa287c8f63fa26bf2d7f0559c5820070f79abcf"
+    },
+    {
+      "package": "jev-calibrated-decisions/SKILL.md",
+      "sha256": "cb77bc5c8b14a1fa60a0a11ed825e650a4cea8fd5c4fc4cd2198d970236f3a65"
+    },
+    {
+      "package": "jev-calibrated-decisions/agents/openai.yaml",
+      "sha256": "b7092aaf459dc6808dbcdaeb062f73e96a41bf1c1d2f4d3daa6fa06a5cf47fb8"
+    },
+    {
+      "package": "jev-calibrated-decisions/fixtures/image-negative.png",
+      "sha256": "3d390005f3625c59c4ccef531b7cc3b4602bfa28c7f0f5ce063c4009678ed97f"
+    },
+    {
+      "package": "jev-calibrated-decisions/fixtures/image-positive.png",
+      "sha256": "e5d02ba29c699f30d023d29a6110b1ef6aaea5b050d6ca0d376e2892a915d7ac"
+    },
+    {
+      "package": "jev-calibrated-decisions/references/accuracy-playbook.md",
+      "sha256": "1f6780f02125625de792001025eb1c34dd5ba1b680280526a435f0776fa594b2"
+    },
+    {
+      "package": "jev-calibrated-decisions/references/images.md",
+      "sha256": "682afa2d334cb2ae6b852904b8d2a032b899684012e743aa353b6a6de632ee7c"
+    },
+    {
+      "package": "jev-calibrated-decisions/scripts/evaluate_results.py",
+      "sha256": "44047384f909fb6c9aa18eb77ebde9d128c3a7823e1ea6bd551393129ce9d75e"
+    },
+    {
+      "package": "jev-calibrated-decisions/scripts/jev",
+      "sha256": "685f104f2496672681bf699f761c0318ae443db6f696444ec9aab530e3129997"
+    },
+    {
+      "package": "jev-calibrated-decisions/scripts/jev-pool",
+      "sha256": "cb79b13992f584fa2628cf2b18adf8d868ec83a9e50ef0a336ef0d44b1313dc9"
+    },
+    {
+      "package": "jev-calibrated-decisions/scripts/jev.py",
+      "sha256": "297fcade1a622ea61f6627ba16cb5c77913aa901a5a2beffdb137f2080ff130d"
+    },
+    {
+      "package": "jev-calibrated-decisions/tests/test_batch_metadata.py",
+      "sha256": "02b631772347fe84e746a883f3c11a4a8fdf6929e3ca60d1635b9a0d9b9faeb9"
+    },
+    {
+      "package": "jev-calibrated-decisions/tests/test_evaluate_results.py",
+      "sha256": "93c5e250ee1c6a6b2e2a0bd72514f57775836d5fd8ed519fc895a0476749e4b6"
+    },
+    {
+      "package": "jev-calibrated-decisions/tests/test_images.py",
+      "sha256": "588f884b17f7f0c9ce136dca0877bab899fe63a15939ad4adfe0353a9e6951c6"
+    },
+    {
+      "package": "jev-calibrated-decisions/tests/test_key_pool.py",
+      "sha256": "d1ae9c1d4d6ddb67eaed9f4499e48deac2e944fd95d0a2f0d28587f3970ee037"
     }
   ],
-  "chatgpt_final_review": {
-    "verdict": "PASS",
-    "confidence_percent": 98
-  },
-  "removed_topics": [
-    "Publisher tutorial absent from current main",
-    "Duplicate provenance explanations",
-    "Contributor manifest-maintenance discussion",
-    "Internal adapter architecture",
-    "Detailed technical thresholds and advanced pointer inventory",
-    "Duplicate release feature/setup inventory"
+  "tests": [
+    {
+      "command": "python3 -B -m unittest discover -s antigravity-task-runner/tests -q",
+      "environment": "WORKFLOW_WORKER and WORKFLOW_REVIEW_CONTEXT_FILE unset",
+      "passed": 178,
+      "exit_code": 0
+    },
+    {
+      "command": "python3 -B -m unittest discover -s jev-calibrated-decisions/tests -q",
+      "passed": 48,
+      "exit_code": 0
+    }
   ],
-  "canonical_provenance": "THIRD_PARTY_NOTICES.md and upstream license files retained unchanged",
-  "runtime_evidence": "Release2026.10.31.5 runtime/test source bytes retained; no new live execution claimed.",
-  "global_skill_writes_by_this_task": false,
-  "residual_risk": "CLI authentication, key pool and Codex policy setup remain manual. Offline documentation checks do not establish online API availability."
+  "retained_global_review": {
+    "verdict": "PASS",
+    "confidence": 91,
+    "not_a_new_live_run": true
+  },
+  "security": {
+    "existing_private_key_values_checked": 5,
+    "matches": 0,
+    "personal_absolute_paths": 0,
+    "known_public_fixture_heuristic_flags": 8,
+    "scanner_unchanged": true
+  },
+  "documentation": {
+    "characters": 5598,
+    "bash_syntax_exit_code": 0,
+    "secret_scanner": "PASS"
+  },
+  "policy_projection": "Global AGENTS snapshot with machine-specific home prefix replaced by ~; installer never auto-applies it.",
+  "limitations": [
+    "Offline verification does not establish future service availability or live-trading readiness.",
+    "Desktop coordination tokens unknown and excluded.",
+    "Older interrupted/failed model attempts retained privately, never counted as PASS."
+  ],
+  "installer": {
+    "verify_exit_code": 0,
+    "isolated_install_exit_code": 0,
+    "registered_skill_links": 3,
+    "registered_launcher_links": 2,
+    "launcher_help_exit_codes": [
+      0,
+      0
+    ],
+    "active_global_untouched": true
+  },
+  "publication_reviews": {
+    "jev": {
+      "label": "conflicting",
+      "confidence": 0.25,
+      "margin": 0.09999999999999998,
+      "concern_probability": 0.27
+    },
+    "jev_low_confidence_escalated": true,
+    "independent_high": [
+      {
+        "scope": [
+          "INSTALL.md"
+        ],
+        "model": "gemini-4-argon-high",
+        "effort": "high",
+        "verdict": "PASS",
+        "confidence": 96.0,
+        "evidence_sha256": "9179dbb0722e2277b4c8e505cf3cdc63d6fb5556101d83d54d76bec942d552c3",
+        "usage": {
+          "input_tokens": 20569,
+          "output_tokens": 3707,
+          "thinking_tokens": 3574,
+          "cache_read_tokens": 0,
+          "total_tokens": 24276
+        }
+      },
+      {
+        "scope": [
+          "README.md",
+          "RELEASE_NOTES.md",
+          "VERIFICATION.md"
+        ],
+        "model": "gemini-4-argon-high",
+        "effort": "high",
+        "verdict": "PASS",
+        "confidence": 96.5,
+        "evidence_sha256": "03b96fdb6fe4ef67d553539d2e2ebef17dde6b45af8180d7cb9c254321404049",
+        "usage": {
+          "input_tokens": 17918,
+          "output_tokens": 2041,
+          "thinking_tokens": 1875,
+          "cache_read_tokens": 0,
+          "total_tokens": 19959
+        }
+      }
+    ],
+    "final_chatgpt_review": "Required separately before push; public metadata does not preclaim it."
+  }
 }

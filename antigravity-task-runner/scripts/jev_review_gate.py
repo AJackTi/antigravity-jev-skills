@@ -17,16 +17,35 @@ POLICY_VERSION = 'jev-review-v1'
 JEV_MODEL = 'jev-1.13.0'
 GEMINI_MODEL = 'gemini-4-argon-high'  # backwards-compatible default AGY_MODEL
 SUPPORTED_MODELS = (GEMINI_MODEL, 'claude-opus-5-5-high')  # only actually verified high-effort slugs
-# Optional Devin/OpenCode worker identities (tool-free generation adapters). Never an AGY_MODEL, never a reviewer,
+# Optional Devin/OpenCode/Free-API worker identities (tool-free generation adapters). Never an AGY_MODEL, never a reviewer,
 # never labelled high effort / request-review / SUCCESS; validated separately from agy proof.
 WORKER_PROVIDERS = ('agy', 'devin')
-WORKFLOW_WORKER_PROVIDERS = ('agy', 'devin', 'opencode')
+FREE_API_PROVIDERS = ('zai', 'openrouter')
+WORKFLOW_WORKER_PROVIDERS = ('agy', 'devin', 'opencode', 'zai', 'openrouter')
 DEVIN_MODEL = 'swe-1-6-slow'
 DEVIN_MODEL_NAME = 'SWE-1.6 Slow'
 DEVIN_PERMISSION_MODE = 'Normal'
 DEVIN_ATIF_SCHEMA = 'ATIF-v1.7'
 DEVIN_STDOUT_NORMALIZATION = 'stripped exactly one leading ESC[?2004l (bracketed-paste disable) from raw stdout'
 OPENCODE_MODEL_RE = re.compile(r'\A(?P<provider>[A-Za-z0-9][A-Za-z0-9._-]*)/(?P<model>[A-Za-z0-9][A-Za-z0-9._:/-]*)\Z')
+ZAI_DEFAULT_MODEL = 'glm-4.5-flash'
+ZAI_FREE_MODELS = ('glm-4.5-flash',)
+ZAI_OVERLOADED_MODELS = ('glm-4.7-flash',)
+ZAI_CHAT_ENDPOINT = 'https://api.z.ai/api/paas/v4/chat/completions'
+OPENROUTER_CHAT_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions'
+OPENROUTER_MODELS_ENDPOINT = 'https://openrouter.ai/api/v1/models'
+OPENROUTER_MODEL_RE = re.compile(
+    r'\A(?P<vendor>[A-Za-z0-9][A-Za-z0-9._-]*)/(?P<slug>[A-Za-z0-9][A-Za-z0-9._-]*):free\Z'
+)
+FREE_API_FINISH_REASONS = ('stop', 'end_turn', 'completed')
+FREE_API_USAGE_KEYS = (
+    'prompt_tokens',
+    'completion_tokens',
+    'total_tokens',
+    'cached_tokens',
+    'reasoning_tokens',
+    'total_steps',
+)
 
 
 def parse_opencode_model(value: object) -> tuple[str, str]:
@@ -44,6 +63,40 @@ def parse_opencode_model(value: object) -> tuple[str, str]:
     if not match:
         raise ValueError('BLOCKED: OPENCODE_MODEL must be an explicit exact <providerID>/<modelID>')
     return match.group('provider'), match.group('model')
+
+
+def parse_zai_model(value: object = None) -> str:
+    """Validate Z.ai model against the explicit free-model allowlist (glm-4.5-flash default; no paid fallback)."""
+    if value is None or value == '':
+        return ZAI_DEFAULT_MODEL
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError('BLOCKED: ZAI_MODEL must be a non-empty allowlisted free model string')
+    if value in ZAI_OVERLOADED_MODELS:
+        raise ValueError(
+            f'BLOCKED: ZAI_MODEL {value} returned 429/1305 overload and is not certified available; '
+            'allowed free models: ' + ', '.join(ZAI_FREE_MODELS)
+        )
+    if value not in ZAI_FREE_MODELS:
+        raise ValueError(
+            'BLOCKED: unsupported or paid ZAI_MODEL; allowed free models: ' + ', '.join(ZAI_FREE_MODELS)
+        )
+    return value
+
+
+def parse_openrouter_model(value: object) -> tuple[str, str]:
+    """Validate an explicit OpenRouter `<vendor>/<slug>:free` identifier (no default, no paid model)."""
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or '..' in value
+        or '//' in value
+    ):
+        raise ValueError('BLOCKED: OPENROUTER_MODEL must be an explicit exact <vendor>/<slug>:free model')
+    match = OPENROUTER_MODEL_RE.fullmatch(value)
+    if not match:
+        raise ValueError('BLOCKED: OPENROUTER_MODEL must be an explicit exact <vendor>/<slug>:free model')
+    return match.group('vendor'), f"{match.group('slug')}:free"
 
 
 def selected_model():
@@ -84,11 +137,13 @@ QUESTIONS = {
 KEY_VALUE = re.compile(
     r'(?i)apikey_[a-z0-9]+_[a-z0-9]+'
     r'|\bsk-[a-z0-9_-]{16,}'
+    r'|\bzai-[a-z0-9_-]{16,}'
+    r'|\b[0-9a-f]{32}\.[A-Za-z0-9]{16,}\b'
     r'|\bBearer[ \t]+[a-z0-9._~+/=-]{4,}(?:[ \t]+[a-z0-9._~+/=-]+)*'
 )
 SECRET_NAME = re.compile(r'(?i)^(?:api[_-]?key|authorization|password|secret|token|access[_-]?token|refresh[_-]?token)$')
 # A sensitive assignment invalidates the rest of a diagnostic string: values
-# may be quoted, escaped, multi-token Bearer headers or continued across lines.
+# may be quoted, escaped, multi-token authentication headers or continued across lines.
 # Public code syntax (type annotations, keyword-arg identifier references, calls)
 # without embedded credential values is filtered out by _find_secret_assignment.
 SECRET_ASSIGNMENT = re.compile(
@@ -160,7 +215,7 @@ _BLOCK_HEADER_RE = re.compile(r'(?:^|\n)[+-]?[ \t]*(?:if|elif|while|for|except|w
 _FSTRING_PREFIX_RE = re.compile(r'\bf[\"\'][^\n\"\']*$')
 _FSTRING_INTERP_RE = re.compile(r'^\{[A-Za-z_][A-Za-z0-9_.]*(?:![rsa])?(?::[^{}\"\'\n]*)?\}\s*[\"\']')
 _QUOTED_SECRET_RE = re.compile(r'^(?:\\?[\"\'])(?!\\?[\"\']|<redacted)([^\n\"\']{1,})')
-_EXPLICIT_SECRET_PREFIX_RE = re.compile(r'(?i)^(?:Bearer\b|apikey_[a-z0-9]+|sk-[a-z0-9_-]+)')
+_EXPLICIT_SECRET_PREFIX_RE = re.compile(r'(?i)^(?:Bearer\b|apikey_[a-z0-9]+|sk-[a-z0-9_-]+|zai-[a-z0-9_-]+|[0-9a-f]{32}\.[A-Za-z0-9]{16,})')
 
 
 def _find_secret_assignment(text: str):
@@ -417,6 +472,117 @@ def _opencode_proof_problems(proof, worker=None):
     return problems
 
 
+def _free_api_worker_problems(worker, provider):
+    label = 'Z.ai' if provider == 'zai' else 'OpenRouter'
+    problems = []
+    model = worker.get('model') if isinstance(worker, dict) else None
+    if provider == 'zai':
+        valid_model = isinstance(model, str) and model in ZAI_FREE_MODELS
+    elif provider == 'openrouter':
+        try:
+            vendor, slug = parse_openrouter_model(model)
+            valid_model = (
+                isinstance(worker, dict)
+                and worker.get('provider_id', vendor) == vendor
+                and worker.get('model_id', slug) == slug
+            )
+        except ValueError:
+            valid_model = False
+    else:
+        valid_model = False
+    if not (isinstance(worker, dict)
+            and worker.get('provider') == provider
+            and type(worker.get('exit_code')) is int and worker['exit_code'] == 0
+            and valid_model
+            and worker.get('proof_status') == 'VERIFIED'
+            and isinstance(worker.get('request_id'), str) and worker['request_id'].strip()
+            and isinstance(worker.get('response'), str) and worker['response'].strip()
+            and worker.get('tool_denied') is False
+            and type(worker.get('tool_calls')) is int and worker['tool_calls'] == 0):
+        problems.append(f'{label} worker evidence incomplete, invalid model, tool use, or denial')
+    if isinstance(worker, dict) and any(k in worker for k in ('status', 'effort', 'permission_mode', 'actual_init_model')):
+        problems.append(f'{label} worker carries AGY-only status/effort/permission metadata; refusing fabricated proof')
+    return problems
+
+
+def _free_api_proof_problems(proof, worker=None, provider='zai'):
+    label = 'Z.ai' if provider == 'zai' else 'OpenRouter'
+    if not isinstance(proof, dict):
+        return [f'{label} worker_proof missing']
+    problems = []
+    req_model = proof.get('requested_model')
+    act_model = proof.get('actual_generation_model')
+    worker_model = worker.get('model') if isinstance(worker, dict) else None
+    usage = proof.get('usage')
+    valid_usage = (
+        isinstance(usage, dict)
+        and set(usage.keys()) == set(FREE_API_USAGE_KEYS)
+        and all(type(usage.get(k)) is int and usage[k] >= 0 for k in FREE_API_USAGE_KEYS)
+        and usage['prompt_tokens'] > 0
+        and usage['completion_tokens'] > 0
+        and usage['total_steps'] == 1
+        and usage['cached_tokens'] <= usage['prompt_tokens']
+        and usage['reasoning_tokens'] <= usage['completion_tokens']
+        and usage['total_tokens'] == usage['prompt_tokens'] + usage['completion_tokens']
+    )
+    if provider == 'zai':
+        provider_ok = (
+            isinstance(act_model, str)
+            and act_model in ZAI_FREE_MODELS
+            and proof.get('endpoint') == ZAI_CHAT_ENDPOINT
+            and proof.get('pricing_verified') is True
+            and proof.get('free_tier_only') is True
+            and isinstance(proof.get('quota_attestation'), str)
+            and 'does not prove numeric remaining quota' in proof['quota_attestation']
+        )
+    elif provider == 'openrouter':
+        try:
+            vendor, slug = parse_openrouter_model(act_model)
+        except ValueError:
+            vendor, slug = None, None
+        native_cost = proof.get('native_cost')
+        provider_ok = (
+            vendor is not None and slug is not None
+            and proof.get('provider_id', vendor) == vendor
+            and proof.get('model_id', slug) == slug
+            and proof.get('endpoint') == OPENROUTER_CHAT_ENDPOINT
+            and proof.get('catalog_endpoint') == OPENROUTER_MODELS_ENDPOINT
+            and proof.get('catalog_pricing') == {'prompt': '0', 'completion': '0', 'request': '0'}
+            and proof.get('request_max_price') == {'prompt': 0, 'completion': 0, 'request': 0}
+            and proof.get('allow_fallbacks') is False
+            and proof.get('pricing_verified') is True
+            and proof.get('free_tier_only') is True
+            and (native_cost is None or (type(native_cost) in (int, float) and native_cost == 0))
+            and isinstance(proof.get('catalog_sha256'), str)
+            and bool(OPENCODE_SHA256_RE.fullmatch(proof['catalog_sha256']))
+        )
+    else:
+        provider_ok = False
+    if not (proof.get('provider') == provider
+          and provider_ok
+          and req_model == act_model
+          and (worker_model is None or act_model == worker_model)
+          and type(proof.get('exit_code')) is int and proof['exit_code'] == 0
+          and type(proof.get('http_status')) is int and proof['http_status'] == 200
+          and type(proof.get('tool_calls')) is int and proof['tool_calls'] == 0
+          and proof.get('tool_denied') is False
+          and type(proof.get('redirects_followed')) is int and proof['redirects_followed'] == 0
+          and isinstance(proof.get('request_id'), str) and proof['request_id'].strip()
+          and (not isinstance(worker, dict) or worker.get('request_id') in (None, proof['request_id']))
+          and type(proof.get('generation_steps')) is int and proof['generation_steps'] == 1
+          and proof.get('finish_reason') in FREE_API_FINISH_REASONS
+          and proof.get('credential_source_status') == 'VERIFIED_PRIVATE_FILE'
+          and all(isinstance(proof.get(k), str) and bool(OPENCODE_SHA256_RE.fullmatch(proof[k]))
+                  for k in ('request_sha256', 'response_sha256', 'final_response_sha256'))
+          and valid_usage):
+        problems.append(
+            f'{label} worker_proof inconsistent with exact free model, HTTP 200, zero tools, zero redirects, hashes or verified usage'
+        )
+    if any(k in proof for k in ('actual_init_model', 'status', 'effort', 'permission_mode')):
+        problems.append(f'{label} worker_proof carries AGY/Devin-only init/status/effort/permission_mode fields')
+    return problems
+
+
 def check_packet(packet, model=None):
     """Validate supplied coordinator proof, not the truth of arbitrary logs."""
     if not isinstance(packet, dict):
@@ -438,6 +604,8 @@ def check_packet(packet, model=None):
         problems.extend(_devin_worker_problems(worker))
     elif provider == 'opencode':
         problems.extend(_opencode_worker_problems(worker))
+    elif provider in FREE_API_PROVIDERS:
+        problems.extend(_free_api_worker_problems(worker, provider))
     elif provider != 'agy':
         problems.append('unsupported worker provider')
     elif not isinstance(worker, dict) or not (
@@ -486,6 +654,8 @@ def check_packet(packet, model=None):
         problems.extend(_devin_proof_problems(evidence.get('worker_proof') if isinstance(evidence, dict) else None))
     elif provider == 'opencode':
         problems.extend(_opencode_proof_problems(evidence.get('worker_proof') if isinstance(evidence, dict) else None, worker))
+    elif provider in FREE_API_PROVIDERS:
+        problems.extend(_free_api_proof_problems(evidence.get('worker_proof') if isinstance(evidence, dict) else None, worker, provider))
     elif isinstance(evidence, dict) and 'worker_proof' in evidence:
         proof = evidence['worker_proof']
         if not (isinstance(proof, dict) and proof.get('actual_init_model') == model
@@ -650,8 +820,9 @@ def run_reviewer(packet, assessment, route, output, number, model=None):
               'or claim tests not present in the evidence. A missing mechanical requirement blocks PASS. '
               '`findings` must contain ONLY actionable blocking defects; PASS requires `findings` to be exactly []. '
               'Put positive observations, scope notes and limitations ONLY in residual_risk. Use REJECT for actual defects. '
-              'evidence.worker_proof is coordinator-parsed worker CLI metadata (agy init/result, the Devin ATIF export '
-              'when provider is devin, or the OpenCode stream/export when provider is opencode: a different worker model, never you); evidence.full_worker_handoff is the '
+              'evidence.worker_proof is coordinator-parsed worker metadata (agy init/result, the Devin ATIF export '
+              'when provider is devin, the OpenCode stream/export when provider is opencode, or the sanitized direct '
+              'API proof when provider is zai or openrouter: a different worker model, never you); evidence.full_worker_handoff is the '
               'full worker response and evidence.summary is only a short excerpt. Your cwd is a separate read-only '
               'artifact folder by design; file paths and hashes refer to evidence.source_workspace. '
               'Return only JSON: {"verdict":"PASS|REJECT|BLOCKED","confidence":0..99.9,'
